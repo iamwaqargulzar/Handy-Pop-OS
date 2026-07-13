@@ -18,6 +18,20 @@ bun run build                   # Build frontend
 bun run tauri build             # Production build
 ```
 
+**Windows Build (required workarounds):**
+
+```powershell
+# Type-check (Rust only):
+$env:CARGO_TARGET_DIR="C:\t"; cargo check
+
+# Full release build (both workarounds combined):
+$env:CARGO_TARGET_DIR="C:\t"; bun run tauri build --no-sign
+
+# Installers appear at:
+#   C:\t\release\bundle\nsis\Handy_0.9.0_x64-setup.exe
+#   C:\t\release\bundle\msi\Handy_0.9.0_x64_en-US.msi
+```
+
 **Type Check & Build:**
 
 ```bash

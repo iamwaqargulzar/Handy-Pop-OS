@@ -22,10 +22,18 @@ type PostProcessProviderState = {
   modelOptions: ModelOption[];
   isModelUpdating: boolean;
   isFetchingModels: boolean;
+  reasoningEffort: string;
+  handleReasoningEffortChange: (value: string) => void;
+  isReasoningEffortUpdating: boolean;
   handleProviderSelect: (providerId: string) => void;
   handleModelSelect: (value: string) => void;
   handleModelCreate: (value: string) => void;
   handleRefreshModels: () => void;
+  modelPriority1: string;
+  modelPriority2: string;
+  modelPriority3: string;
+  handleModelPrioritySelect: (priorityIndex: number, value: string) => void;
+  modelOptionsWithNone: ModelOption[];
 };
 
 const APPLE_PROVIDER_ID = "apple_intelligence";
@@ -38,6 +46,7 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
     updatePostProcessBaseUrl,
     updatePostProcessApiKey,
     updatePostProcessModel,
+    updatePostProcessReasoningEffort,
     fetchPostProcessModels,
     postProcessModelOptions,
   } = useSettings();
@@ -64,6 +73,7 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   const baseUrl = selectedProvider?.base_url ?? "";
   const apiKey = settings?.post_process_api_keys?.[selectedProviderId] ?? "";
   const model = settings?.post_process_models?.[selectedProviderId] ?? "";
+  const reasoningEffort = settings?.post_process_reasoning_efforts?.[selectedProviderId] ?? "default";
 
   const providerOptions = useMemo<DropdownOption[]>(() => {
     return providers.map((provider) => ({
@@ -149,18 +159,56 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
     [model, selectedProviderId, updatePostProcessModel],
   );
 
+  const handleReasoningEffortChange = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (trimmed !== reasoningEffort) {
+        void updatePostProcessReasoningEffort(selectedProviderId, trimmed);
+      }
+    },
+    [reasoningEffort, selectedProviderId, updatePostProcessReasoningEffort],
+  );
+
+  const modelParts = useMemo(() => {
+    const parts = model.split('|');
+    return [
+      parts[0] || "",
+      parts[1] || "",
+      parts[2] || ""
+    ];
+  }, [model]);
+
+  const modelPriority1 = modelParts[0];
+  const modelPriority2 = modelParts[1];
+  const modelPriority3 = modelParts[2];
+
+  const handleModelPrioritySelect = useCallback(
+    (priorityIndex: number, value: string) => {
+      const parts = [...modelParts];
+      parts[priorityIndex] = value.trim();
+      
+      let endIdx = parts.length;
+      while (endIdx > 1 && !parts[endIdx - 1]) {
+        endIdx--;
+      }
+      const newModelValue = parts.slice(0, endIdx).join('|');
+      void updatePostProcessModel(selectedProviderId, newModelValue);
+    },
+    [modelParts, selectedProviderId, updatePostProcessModel],
+  );
+
   const handleModelSelect = useCallback(
     (value: string) => {
-      void updatePostProcessModel(selectedProviderId, value.trim());
+      handleModelPrioritySelect(0, value);
     },
-    [selectedProviderId, updatePostProcessModel],
+    [handleModelPrioritySelect],
   );
 
   const handleModelCreate = useCallback(
     (value: string) => {
-      void updatePostProcessModel(selectedProviderId, value);
+      handleModelPrioritySelect(0, value);
     },
-    [selectedProviderId, updatePostProcessModel],
+    [handleModelPrioritySelect],
   );
 
   const handleRefreshModels = useCallback(() => {
@@ -186,11 +234,17 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
       upsert(candidate);
     }
 
-    // Ensure current model is in the list
-    upsert(model);
+    // Ensure current prioritized models are in the options list
+    upsert(modelPriority1);
+    upsert(modelPriority2);
+    upsert(modelPriority3);
 
     return options;
-  }, [availableModelsRaw, model]);
+  }, [availableModelsRaw, modelPriority1, modelPriority2, modelPriority3]);
+
+  const modelOptionsWithNone = useMemo<ModelOption[]>(() => {
+    return [{ value: "", label: "None (No Fallback)" }, ...modelOptions];
+  }, [modelOptions]);
 
   const isBaseUrlUpdating = isUpdating(
     `post_process_base_url:${selectedProviderId}`,
@@ -200,6 +254,9 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   );
   const isModelUpdating = isUpdating(
     `post_process_model:${selectedProviderId}`,
+  );
+  const isReasoningEffortUpdating = isUpdating(
+    `post_process_reasoning_effort:${selectedProviderId}`,
   );
   const isFetchingModels = isUpdating(
     `post_process_models_fetch:${selectedProviderId}`,
@@ -227,9 +284,17 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
     modelOptions,
     isModelUpdating,
     isFetchingModels,
+    reasoningEffort,
+    handleReasoningEffortChange,
+    isReasoningEffortUpdating,
     handleProviderSelect,
     handleModelSelect,
     handleModelCreate,
     handleRefreshModels,
+    modelPriority1,
+    modelPriority2,
+    modelPriority3,
+    handleModelPrioritySelect,
+    modelOptionsWithNone,
   };
 };

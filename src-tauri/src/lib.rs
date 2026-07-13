@@ -560,6 +560,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_post_process_base_url_setting,
             shortcut::change_post_process_api_key_setting,
             shortcut::change_post_process_model_setting,
+            shortcut::change_post_process_reasoning_effort_setting,
             shortcut::set_post_process_provider,
             shortcut::fetch_post_process_models,
             shortcut::add_post_process_prompt,
@@ -723,12 +724,41 @@ pub fn run(cli_args: CliArgs) {
     // instance instead.
     if !headless_mode {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // Find if --load-model is passed and its value
+            let mut load_model_value = None;
+            for (i, arg) in args.iter().enumerate() {
+                if arg == "--load-model" && i + 1 < args.len() {
+                    load_model_value = Some(args[i + 1].clone());
+                    break;
+                }
+            }
+
             if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
             } else if args.iter().any(|a| a == "--toggle-post-process") {
                 signal_handle::send_transcription_input(app, "transcribe_with_post_process", "CLI");
             } else if args.iter().any(|a| a == "--cancel") {
                 crate::utils::cancel_current_operation(app);
+            } else if let Some(model_query) = load_model_value {
+                let query = model_query.to_lowercase();
+                let model_manager = app.state::<std::sync::Arc<crate::managers::model::ModelManager>>();
+                let models = model_manager.get_available_models();
+                let matched_model = models
+                    .iter()
+                    .filter(|m| m.is_downloaded)
+                    .find(|m| m.id.to_lowercase().contains(&query) || m.name.to_lowercase().contains(&query));
+
+                if let Some(target_model) = matched_model {
+                    log::info!("CLI request to switch model to: {}", target_model.id);
+                    if let Err(e) = crate::commands::models::switch_active_model(app, &target_model.id) {
+                        log::error!("Failed to switch model via CLI: {}", e);
+                    } else {
+                        // Play start audio chime to confirm model switch!
+                        crate::audio_feedback::play_test_sound(app, crate::audio_feedback::SoundType::Start);
+                    }
+                } else {
+                    log::warn!("No downloaded model matches CLI query: {}", model_query);
+                }
             } else {
                 show_main_window(app);
             }

@@ -24,6 +24,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub cancel: bool,
 
+    /// Load a specific model in the running instance by matching its ID or name (sent to running instance)
+    #[arg(long, value_name = "MODEL_NAME")]
+    pub load_model: Option<String>,
+
     /// Enable debug mode with verbose logging
     #[arg(long)]
     pub debug: bool,

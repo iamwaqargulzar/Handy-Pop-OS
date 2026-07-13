@@ -38,7 +38,7 @@ interface SettingsStore {
   checkCustomSounds: () => Promise<void>;
   setPostProcessProvider: (providerId: string) => Promise<void>;
   updatePostProcessSetting: (
-    settingType: "base_url" | "api_key" | "model",
+    settingType: "base_url" | "api_key" | "model" | "reasoning_effort",
     providerId: string,
     value: string,
   ) => Promise<void>;
@@ -51,6 +51,7 @@ interface SettingsStore {
     apiKey: string,
   ) => Promise<void>;
   updatePostProcessModel: (providerId: string, model: string) => Promise<void>;
+  updatePostProcessReasoningEffort: (providerId: string, reasoningEffort: string) => Promise<void>;
   fetchPostProcessModels: (providerId: string) => Promise<string[]>;
   setPostProcessModelOptions: (providerId: string, models: string[]) => void;
 
@@ -335,7 +336,11 @@ export const useSettingsStore = create<SettingsStore>()(
                 bindings: {
                   ...state.settings.bindings,
                   [id]: {
-                    ...state.settings.bindings[id]!,
+                    id,
+                    name: "Model Switch",
+                    description: `Switch to model ${id.replace("model:", "")}`,
+                    default_binding: "",
+                    ...(state.settings.bindings[id] || {}),
                     current_binding: binding,
                   },
                 },
@@ -358,7 +363,7 @@ export const useSettingsStore = create<SettingsStore>()(
         console.error(`Failed to update binding ${id}:`, error);
 
         // Rollback on error
-        if (originalBinding && get().settings) {
+        if (get().settings) {
           set((state) => ({
             settings: state.settings
               ? {
@@ -366,8 +371,12 @@ export const useSettingsStore = create<SettingsStore>()(
                   bindings: {
                     ...state.settings.bindings,
                     [id]: {
-                      ...state.settings.bindings[id]!,
-                      current_binding: originalBinding,
+                      id,
+                      name: "Model Switch",
+                      description: `Switch to model ${id.replace("model:", "")}`,
+                      default_binding: "",
+                      ...(state.settings.bindings[id] || {}),
+                      current_binding: originalBinding || "",
                     },
                   },
                 }
@@ -442,7 +451,7 @@ export const useSettingsStore = create<SettingsStore>()(
 
     // Generic updater for post-processing provider settings
     updatePostProcessSetting: async (
-      settingType: "base_url" | "api_key" | "model",
+      settingType: "base_url" | "api_key" | "model" | "reasoning_effort",
       providerId: string,
       value: string,
     ) => {
@@ -458,6 +467,8 @@ export const useSettingsStore = create<SettingsStore>()(
           await commands.changePostProcessApiKeySetting(providerId, value);
         } else if (settingType === "model") {
           await commands.changePostProcessModelSetting(providerId, value);
+        } else if (settingType === "reasoning_effort") {
+          await commands.changePostProcessReasoningEffortSetting(providerId, value);
         }
         await refreshSettings();
       } catch (error) {
@@ -529,6 +540,10 @@ export const useSettingsStore = create<SettingsStore>()(
 
     updatePostProcessModel: async (providerId, model) => {
       return get().updatePostProcessSetting("model", providerId, model);
+    },
+
+    updatePostProcessReasoningEffort: async (providerId, reasoningEffort) => {
+      return get().updatePostProcessSetting("reasoning_effort", providerId, reasoningEffort);
     },
 
     fetchPostProcessModels: async (providerId) => {

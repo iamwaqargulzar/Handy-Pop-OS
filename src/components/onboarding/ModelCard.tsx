@@ -22,6 +22,7 @@ import {
 } from "../../lib/constants/languages";
 import Badge from "../ui/Badge";
 import { Button } from "../ui/Button";
+import { ShortcutInput } from "../settings/ShortcutInput";
 
 // Get display text for model's language support
 const getLanguageDisplayText = (
@@ -254,6 +255,17 @@ const ModelCard: React.FC<ModelCardProps> = ({
           >
             <AudioLines className="w-3.5 h-3.5" />
             <span>{t("modelSelector.streaming")}</span>
+          </div>
+        )}
+        {(status === "available" || status === "active") && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 text-xs text-text/50 border border-mid-gray/30 rounded-md px-1.5 py-0.5 bg-mid-gray/5 hover:bg-mid-gray/10 hover:border-logo-primary/30 transition-all ml-1.5 h-6"
+            title="Assign a global hotkey to instantly switch to this model"
+          >
+            <span className="font-medium text-text/40 mr-0.5">Hotkey:</span>
+            <ShortcutInput shortcutId={`model:${model.id}`} plain={true} />
           </div>
         )}
         {showModelSize && (

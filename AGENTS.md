@@ -55,19 +55,24 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
 
 ### Backend Structure (src-tauri/src/)
 
-- `lib.rs` - Main entry point, Tauri setup, manager initialization
+- `lib.rs` - Main entry point, Tauri setup, manager initialization, single-instance CLI handling (`--load-model`)
 - `managers/` - Core business logic:
   - `audio.rs` - Audio recording and device management
   - `model.rs` - Model downloading and management
-  - `transcription.rs` - Speech-to-text processing pipeline
+  - `transcription.rs` - Speech-to-text processing pipeline (with remote NPU backend bypass)
   - `history.rs` - Transcription history storage
+  - `remote_whisper_server.rs` - Intel OpenVINO NPU Whisper server manager
 - `audio_toolkit/` - Low-level audio processing:
   - `audio/` - Device enumeration, recording, resampling
   - `vad/` - Voice Activity Detection (Silero VAD)
 - `commands/` - Tauri command handlers for frontend communication
 - `cli.rs` - CLI argument definitions (clap derive)
-- `shortcut.rs` - Global keyboard shortcut handling
-- `settings.rs` - Application settings management
+- `shortcut/` - Global keyboard shortcut handling:
+  - `mod.rs` - Shortcut registration, dynamic `model:<id>` binding management
+  - `handler.rs` - Shortcut event dispatch (includes model-switch hotkey interception)
+  - `handy_keys.rs` - Low-level hook manager with sleep/lock watchdog threads
+- `actions.rs` - Post-processing pipeline with multi-model fallback chain
+- `settings.rs` - Application settings management (includes NPU, reasoning effort, priority models)
 - `overlay.rs` - Recording overlay window (platform-specific)
 - `signal_handle.rs` - `send_transcription_input()` reusable function
 - `utils.rs` - Platform detection helpers
@@ -94,9 +99,11 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
 
 **Command-Event Architecture:** Frontend → Backend via Tauri commands; Backend → Frontend via events.
 
-**Pipeline Processing:** Audio → VAD → Whisper/Parakeet → Text output → Clipboard/Paste
+**Pipeline Processing:** Audio → VAD → Whisper/Parakeet → Text output → (optional) Post-Processing with multi-model fallback → Clipboard/Paste
 
 **State Flow:** Zustand → Tauri Command → Rust State → Persistence (tauri-plugin-store)
+
+**Dynamic Hotkey Bindings:** Model-specific hotkeys are stored in `settings.bindings` with the key format `model:<model_id>`. On registration, the shortcut module loops all bindings (not just defaults) to register dynamic shortcuts. On trigger, `handler.rs` intercepts `model:*` binding IDs to switch the active model.
 
 ### Technology Stack
 
@@ -175,20 +182,22 @@ Handy supports command-line parameters on all platforms for integration with scr
 
 **Implementation:** `cli.rs` (definitions), `main.rs` (parsing), `lib.rs` (applying), `signal_handle.rs` (shared logic)
 
-| Flag                     | Description                                                |
-| ------------------------ | ---------------------------------------------------------- |
-| `--toggle-transcription` | Toggle recording on/off on a running instance              |
-| `--toggle-post-process`  | Toggle recording with post-processing on/off               |
-| `--cancel`               | Cancel the current operation on a running instance         |
-| `--start-hidden`         | Launch without showing the main window (tray icon visible) |
-| `--no-tray`              | Launch without system tray (closing window quits the app)  |
-| `--debug`                | Enable debug mode with verbose (Trace) logging             |
+| Flag                         | Description                                                     |
+| ---------------------------- | --------------------------------------------------------------- |
+| `--toggle-transcription`     | Toggle recording on/off on a running instance                   |
+| `--toggle-post-process`      | Toggle recording with post-processing on/off                    |
+| `--cancel`                   | Cancel the current operation on a running instance              |
+| `--start-hidden`             | Launch without showing the main window (tray icon visible)      |
+| `--no-tray`                  | Launch without system tray (closing window quits the app)       |
+| `--debug`                    | Enable debug mode with verbose (Trace) logging                  |
+| `--load-model <QUERY>`       | Switch the active model on a running instance (substring match) |
 
 **Key design decisions:**
 
 - CLI flags are runtime-only overrides — they do NOT modify persisted settings
 - Remote control flags work via `tauri_plugin_single_instance`: second instance sends args, then exits
 - `send_transcription_input()` in `signal_handle.rs` is shared between signal handlers and CLI
+- `--load-model` performs a case-insensitive substring match against all downloaded models, switches the active model, and plays a confirmation chime. Useful for Logitech G HUB macro integration.
 
 ## Debug Mode
 
@@ -197,8 +206,52 @@ Access debug features: `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux)
 ## Platform Notes
 
 - **macOS**: Metal acceleration, accessibility permissions required for keyboard shortcuts
-- **Windows**: Vulkan acceleration, code signing
+- **Windows**: Vulkan acceleration, code signing. See [Windows compilation workaround](#windows-compilation-workaround) below.
 - **Linux**: OpenBLAS + Vulkan, limited Wayland support, overlay uses GTK layer shell (disable with `HANDY_NO_GTK_LAYER_SHELL=1`)
+
+## Windows Compilation Workaround
+
+On Windows, the Vulkan shader generator creates deeply nested paths that exceed the 260-character `MAX_PATH` limit. **You must redirect Cargo's target directory** to a short path:
+
+```powershell
+# Type-check only:
+$env:CARGO_TARGET_DIR="C:\t"; cargo check
+
+# Full release build (skip code signing if no Azure certificate):
+$env:CARGO_TARGET_DIR="C:\t"; bun run tauri build --no-sign
+```
+
+See [BUILD.md](BUILD.md) for detailed platform-specific instructions.
+
+## Custom Fork Features (Handy-NPU)
+
+This fork adds the following features on top of the upstream Handy codebase:
+
+### Intel OpenVINO NPU Backend
+A remote Whisper backend that runs on Intel NPU via OpenVINO GenAI. Configured via Settings → Remote Whisper Backend.
+- Backend: `managers/remote_whisper_server.rs`, Python server in `backend/`
+- Frontend: `components/settings/RemoteWhisperBackendSettings.tsx`
+
+### Vulkan GPU Acceleration (Windows)
+The `vulkan` feature flag is enabled for `transcribe-cpp` on `x86_64-pc-windows-msvc`, adding GPU-accelerated inference via `ggml-vulkan.dll`.
+
+### Sleep/Resume & Session Lock Watchdogs
+In `shortcut/handy_keys.rs`, two watchdog mechanisms detect when Windows silently strips low-level keyboard hooks:
+1. **Sleep watchdog**: Detects >5s time gaps indicating system suspend/hibernation.
+2. **WTS session lock watchdog**: Polls `WTSQuerySessionInformationW` every 1s to detect lock/unlock transitions. Uses byte offset **16** (not 12) for `SessionFlags` due to MSVC 64-bit struct padding alignment.
+
+### Post-Processing Multi-Model Fallback Chain
+Three priority model selectors (Priority 1, 2, 3) stored as pipe-delimited strings in `post_process_models`. On API error or rate-limit, the system automatically retries with the next model.
+- Backend: `actions.rs` (fallback loop), `settings.rs` (schema)
+- Frontend: `PostProcessingSettings.tsx` (3 dropdown selectors), `usePostProcessProviderState.ts` (pipe parsing)
+
+### Dynamic Model Switch Global Hotkeys
+Users can assign global keyboard hotkeys to any downloaded model directly from the Models page. Stored in `settings.bindings` as `model:<model_id>`.
+- Backend: `shortcut/mod.rs` (registration), `shortcut/handler.rs` (event dispatch)
+- Frontend: `ModelCard.tsx` (inline hotkey recorder), `ShortcutInput.tsx` (`plain` prop for inline layout)
+
+### CLI Model Switching (`--load-model`)
+Switch the active model from the command line: `handy.exe --load-model large`. Useful for Logitech G HUB macro integration.
 
 ## Troubleshooting
 

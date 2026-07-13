@@ -98,7 +98,7 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
 
       {!state.isAppleProvider && (
         <SettingContainer
-          title={t("settings.postProcessing.api.model.title")}
+          title={t("settings.postProcessing.api.model.title", "Post-Processing Models (Priority Chain)")}
           description={
             state.isCustomProvider
               ? t("settings.postProcessing.api.model.descriptionCustom")
@@ -108,34 +108,105 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
           layout="stacked"
           grouped={true}
         >
+          <div className="flex flex-col gap-3">
+            {/* Priority 1 Dropdown */}
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold text-zinc-400">Priority 1 (Primary Model)</span>
+              <div className="flex items-center gap-2">
+                <ModelSelect
+                  value={state.modelPriority1}
+                  options={state.modelOptions}
+                  disabled={state.isModelUpdating}
+                  isLoading={state.isFetchingModels}
+                  placeholder={
+                    state.modelOptions.length > 0
+                      ? t(
+                          "settings.postProcessing.api.model.placeholderWithOptions",
+                        )
+                      : t("settings.postProcessing.api.model.placeholderNoOptions")
+                  }
+                  onSelect={(val) => state.handleModelPrioritySelect(0, val)}
+                  onCreate={state.handleModelCreate}
+                  onBlur={() => {}}
+                  className="flex-1 min-w-[380px]"
+                />
+                <ResetButton
+                  onClick={state.handleRefreshModels}
+                  disabled={state.isFetchingModels}
+                  ariaLabel={t("settings.postProcessing.api.model.refreshModels")}
+                  className="flex h-10 w-10 items-center justify-center"
+                >
+                  <RefreshCcw
+                    className={`h-4 w-4 ${state.isFetchingModels ? "animate-spin" : ""}`}
+                  />
+                </ResetButton>
+              </div>
+            </div>
+
+            {/* Priority 2 Dropdown */}
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold text-zinc-400">Priority 2 (Secondary Fallback)</span>
+              <div className="flex items-center gap-2">
+                <ModelSelect
+                  value={state.modelPriority2}
+                  options={state.modelOptionsWithNone}
+                  disabled={state.isModelUpdating}
+                  isLoading={state.isFetchingModels}
+                  placeholder="None (No Fallback)"
+                  onSelect={(val) => state.handleModelPrioritySelect(1, val)}
+                  onCreate={(val) => state.handleModelPrioritySelect(1, val)}
+                  onBlur={() => {}}
+                  className="flex-1 min-w-[380px]"
+                />
+                <div className="w-10" />
+              </div>
+            </div>
+
+            {/* Priority 3 Dropdown */}
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold text-zinc-400">Priority 3 (Tertiary Fallback)</span>
+              <div className="flex items-center gap-2">
+                <ModelSelect
+                  value={state.modelPriority3}
+                  options={state.modelOptionsWithNone}
+                  disabled={state.isModelUpdating}
+                  isLoading={state.isFetchingModels}
+                  placeholder="None (No Fallback)"
+                  onSelect={(val) => state.handleModelPrioritySelect(2, val)}
+                  onCreate={(val) => state.handleModelPrioritySelect(2, val)}
+                  onBlur={() => {}}
+                  className="flex-1 min-w-[380px]"
+                />
+                <div className="w-10" />
+              </div>
+            </div>
+          </div>
+        </SettingContainer>
+      )}
+
+      {!state.isAppleProvider && (
+        <SettingContainer
+          title={t("settings.postProcessing.api.reasoningEffort.title", "Reasoning Effort")}
+          description={t("settings.postProcessing.api.reasoningEffort.description", "Choose the level of reasoning effort to use for the model. Choose 'Default' if you want to omit the parameter.")}
+          descriptionMode="tooltip"
+          layout="horizontal"
+          grouped={true}
+        >
           <div className="flex items-center gap-2">
-            <ModelSelect
-              value={state.model}
-              options={state.modelOptions}
-              disabled={state.isModelUpdating}
-              isLoading={state.isFetchingModels}
-              placeholder={
-                state.modelOptions.length > 0
-                  ? t(
-                      "settings.postProcessing.api.model.placeholderWithOptions",
-                    )
-                  : t("settings.postProcessing.api.model.placeholderNoOptions")
-              }
-              onSelect={state.handleModelSelect}
-              onCreate={state.handleModelCreate}
-              onBlur={() => {}}
-              className="flex-1 min-w-[380px]"
+            <Dropdown
+              selectedValue={state.reasoningEffort}
+              options={[
+                { value: "default", label: t("settings.postProcessing.api.reasoningEffort.options.default", "Default (Omitted)") },
+                { value: "none", label: t("settings.postProcessing.api.reasoningEffort.options.none", "None (Disabled)") },
+                { value: "low", label: t("settings.postProcessing.api.reasoningEffort.options.low", "Low") },
+                { value: "medium", label: t("settings.postProcessing.api.reasoningEffort.options.medium", "Medium") },
+                { value: "high", label: t("settings.postProcessing.api.reasoningEffort.options.high", "High") },
+              ]}
+              onSelect={(value) => state.handleReasoningEffortChange(value ?? "default")}
+              placeholder={t("settings.postProcessing.api.reasoningEffort.options.default", "Default (Omitted)")}
+              disabled={state.isReasoningEffortUpdating}
+              className="min-w-[280px]"
             />
-            <ResetButton
-              onClick={state.handleRefreshModels}
-              disabled={state.isFetchingModels}
-              ariaLabel={t("settings.postProcessing.api.model.refreshModels")}
-              className="flex h-10 w-10 items-center justify-center"
-            >
-              <RefreshCcw
-                className={`h-4 w-4 ${state.isFetchingModels ? "animate-spin" : ""}`}
-              />
-            </ResetButton>
           </div>
         </SettingContainer>
       )}

@@ -88,13 +88,19 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         }
     };
 
-    let model = settings
+    let model_string = settings
         .post_process_models
         .get(&provider.id)
         .cloned()
         .unwrap_or_default();
 
-    if model.trim().is_empty() {
+    let models_to_try: Vec<&str> = model_string
+        .split('|')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if models_to_try.is_empty() {
         debug!(
             "Post-processing skipped because provider '{}' has no model configured",
             provider.id
@@ -131,8 +137,8 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     }
 
     debug!(
-        "Starting LLM post-processing with provider '{}' (model: {})",
-        provider.id, model
+        "Starting LLM post-processing with provider '{}' (models: {:?})",
+        provider.id, models_to_try
     );
 
     let api_key = settings
@@ -141,12 +147,8 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         .cloned()
         .unwrap_or_default();
 
-    // Disable reasoning for providers where post-processing rarely benefits from it.
-    // - custom: top-level reasoning_effort (works for local OpenAI-compat servers)
-    // - openrouter: nested reasoning object; exclude:true also keeps reasoning text
-    //   out of the response so it can't pollute structured-output JSON parsing
+    // Determine reasoning settings for this provider
     let (reasoning_effort, reasoning) = match provider.id.as_str() {
-        "custom" => (Some("none".to_string()), None),
         "openrouter" => (
             None,
             Some(crate::llm_client::ReasoningConfig {
@@ -154,7 +156,17 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                 exclude: Some(true),
             }),
         ),
-        _ => (None, None),
+        _ => {
+            let effort = settings.post_process_reasoning_efforts
+                .get(&provider.id)
+                .cloned()
+                .unwrap_or_else(|| "default".to_string());
+            if effort == "default" {
+                (None, None)
+            } else {
+                (Some(effort), None)
+            }
+        }
     };
 
     if provider.supports_structured_output {
@@ -174,7 +186,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                     return None;
                 }
 
-                let token_limit = model.trim().parse::<i32>().unwrap_or(0);
+                let token_limit = models_to_try[0].trim().parse::<i32>().unwrap_or(0);
                 return match apple_intelligence::process_text_with_system_prompt(
                     &system_prompt,
                     &user_content,
@@ -220,96 +232,124 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             "additionalProperties": false
         });
 
-        match crate::llm_client::send_chat_completion_with_schema(
-            &provider,
-            api_key.clone(),
-            &model,
-            user_content,
-            Some(system_prompt),
-            Some(json_schema),
-            reasoning_effort.clone(),
-            reasoning.clone(),
-        )
-        .await
-        {
-            Ok(Some(content)) => {
-                // Parse the JSON response to extract the transcription field
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(json) => {
-                        if let Some(transcription_value) =
-                            json.get(TRANSCRIPTION_FIELD).and_then(|t| t.as_str())
-                        {
-                            let result = strip_invisible_chars(transcription_value);
-                            debug!(
-                                "Structured output post-processing succeeded for provider '{}'. Output length: {} chars",
-                                provider.id,
-                                result.len()
+        // Loop through models for structured output
+        let mut last_structured_error = None;
+        let mut structured_success = false;
+        let mut transcription_output = None;
+
+        for current_model in &models_to_try {
+            debug!("Attempting structured output with model '{}'", current_model);
+            match crate::llm_client::send_chat_completion_with_schema(
+                &provider,
+                api_key.clone(),
+                current_model,
+                user_content.clone(),
+                Some(system_prompt.clone()),
+                Some(json_schema.clone()),
+                reasoning_effort.clone(),
+                reasoning.clone(),
+            )
+            .await
+            {
+                Ok(Some(content)) => {
+                    // Parse the JSON response to extract the transcription field
+                    match serde_json::from_str::<serde_json::Value>(&content) {
+                        Ok(json) => {
+                            if let Some(transcription_value) =
+                                json.get(TRANSCRIPTION_FIELD).and_then(|t| t.as_str())
+                            {
+                                let result = strip_invisible_chars(transcription_value);
+                                debug!(
+                                    "Structured output post-processing succeeded for provider '{}' with model '{}'. Output length: {} chars",
+                                    provider.id,
+                                    current_model,
+                                    result.len()
+                                );
+                                transcription_output = Some(result);
+                                structured_success = true;
+                                break;
+                            } else {
+                                error!("Structured output response missing 'transcription' field");
+                                transcription_output = Some(strip_invisible_chars(&content));
+                                structured_success = true;
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to parse structured output JSON: {}. Returning raw content.",
+                                e
                             );
-                            return Some(result);
-                        } else {
-                            error!("Structured output response missing 'transcription' field");
-                            return Some(strip_invisible_chars(&content));
+                            transcription_output = Some(strip_invisible_chars(&content));
+                            structured_success = true;
+                            break;
                         }
                     }
-                    Err(e) => {
-                        error!(
-                            "Failed to parse structured output JSON: {}. Returning raw content.",
-                            e
-                        );
-                        return Some(strip_invisible_chars(&content));
-                    }
+                }
+                Ok(None) => {
+                    warn!("LLM API response from model '{}' had no content, attempting fallback...", current_model);
+                    last_structured_error = Some("API response has no content".to_string());
+                }
+                Err(e) => {
+                    warn!(
+                        "Structured output failed for model '{}' on provider '{}': {}. Attempting fallback...",
+                        current_model, provider.id, e
+                    );
+                    last_structured_error = Some(e);
                 }
             }
-            Ok(None) => {
-                error!("LLM API response has no content");
-                return None;
-            }
-            Err(e) => {
-                warn!(
-                    "Structured output failed for provider '{}': {}. Falling back to legacy mode.",
-                    provider.id, e
-                );
-                // Fall through to legacy mode below
-            }
         }
+
+        if structured_success {
+            return transcription_output;
+        }
+
+        warn!(
+            "All structured output models failed for provider '{}'. Last error: {:?}. Falling back to legacy mode.",
+            provider.id, last_structured_error
+        );
     }
 
     // Legacy mode: Replace ${output} variable in the prompt with the actual text
     let processed_prompt = prompt.replace("${output}", transcription);
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
-    match crate::llm_client::send_chat_completion(
-        &provider,
-        api_key,
-        &model,
-        processed_prompt,
-        reasoning_effort,
-        reasoning,
-    )
-    .await
-    {
-        Ok(Some(content)) => {
-            let content = strip_invisible_chars(&content);
-            debug!(
-                "LLM post-processing succeeded for provider '{}'. Output length: {} chars",
-                provider.id,
-                content.len()
-            );
-            Some(content)
-        }
-        Ok(None) => {
-            error!("LLM API response has no content");
-            None
-        }
-        Err(e) => {
-            error!(
-                "LLM post-processing failed for provider '{}': {}. Falling back to original transcription.",
-                provider.id,
-                e
-            );
-            None
+    for current_model in &models_to_try {
+        debug!("Attempting legacy post-processing with model '{}'", current_model);
+        match crate::llm_client::send_chat_completion(
+            &provider,
+            api_key.clone(),
+            current_model,
+            processed_prompt.clone(),
+            reasoning_effort.clone(),
+            reasoning.clone(),
+        )
+        .await
+        {
+            Ok(Some(content)) => {
+                let content = strip_invisible_chars(&content);
+                debug!(
+                    "LLM post-processing succeeded for provider '{}' with model '{}'. Output length: {} chars",
+                    provider.id,
+                    current_model,
+                    content.len()
+                );
+                return Some(content);
+            }
+            Ok(None) => {
+                warn!("LLM API response from legacy model '{}' had no content, attempting fallback...", current_model);
+            }
+            Err(e) => {
+                warn!(
+                    "LLM post-processing failed for legacy model '{}' on provider '{}': {}. Attempting fallback...",
+                    current_model, provider.id, e
+                );
+            }
         }
     }
+
+    error!("All models failed for provider '{}'. Falling back to original transcription.", provider.id);
+    None
 }
 
 async fn maybe_convert_chinese_variant(

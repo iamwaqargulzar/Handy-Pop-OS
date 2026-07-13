@@ -398,6 +398,8 @@ pub struct AppSettings {
     pub post_process_api_keys: SecretMap,
     #[serde(default = "default_post_process_models")]
     pub post_process_models: HashMap<String, String>,
+    #[serde(default = "default_post_process_reasoning_efforts")]
+    pub post_process_reasoning_efforts: HashMap<String, String>,
     #[serde(default = "default_post_process_prompts")]
     pub post_process_prompts: Vec<LLMPrompt>,
     #[serde(default)]
@@ -672,6 +674,17 @@ fn default_post_process_models() -> HashMap<String, String> {
     map
 }
 
+fn default_post_process_reasoning_efforts() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for provider in default_post_process_providers() {
+        map.insert(
+            provider.id.clone(),
+            "default".to_string(),
+        );
+    }
+    map
+}
+
 fn default_post_process_prompts() -> Vec<LLMPrompt> {
     vec![LLMPrompt {
         id: "default_improve_transcriptions".to_string(),
@@ -736,6 +749,16 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                 settings
                     .post_process_models
                     .insert(provider.id.clone(), default_model);
+                changed = true;
+            }
+        }
+
+        match settings.post_process_reasoning_efforts.get_mut(&provider.id) {
+            Some(_) => {}
+            None => {
+                settings
+                    .post_process_reasoning_efforts
+                    .insert(provider.id.clone(), "default".to_string());
                 changed = true;
             }
         }
@@ -835,6 +858,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_providers: default_post_process_providers(),
         post_process_api_keys: default_post_process_api_keys(),
         post_process_models: default_post_process_models(),
+        post_process_reasoning_efforts: default_post_process_reasoning_efforts(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
         mute_while_recording: false,

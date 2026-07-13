@@ -40,6 +40,7 @@ interface UseSettingsReturn {
     apiKey: string,
   ) => Promise<void>;
   updatePostProcessModel: (providerId: string, model: string) => Promise<void>;
+  updatePostProcessReasoningEffort: (providerId: string, reasoningEffort: string) => Promise<void>;
   fetchPostProcessModels: (providerId: string) => Promise<string[]>;
 }
 
@@ -73,6 +74,7 @@ export const useSettings = (): UseSettingsReturn => {
     updatePostProcessBaseUrl: store.updatePostProcessBaseUrl,
     updatePostProcessApiKey: store.updatePostProcessApiKey,
     updatePostProcessModel: store.updatePostProcessModel,
+    updatePostProcessReasoningEffort: store.updatePostProcessReasoningEffort,
     fetchPostProcessModels: store.fetchPostProcessModels,
   };
 };

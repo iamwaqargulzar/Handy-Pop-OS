@@ -98,7 +98,19 @@ bun tauri dev
 bun run tauri build
 ```
 
-This compiles a release binary and generates platform-specific bundles (deb, rpm, AppImage on Linux; dmg on macOS; msi on Windows).
+**Windows (required workarounds):**
+
+```powershell
+# Redirect target directory to avoid MAX_PATH failures (see Troubleshooting below)
+$env:CARGO_TARGET_DIR = "C:\t"
+
+# Build without code signing (required unless you have the Azure signing certificate)
+bun run tauri build --no-sign
+```
+
+Installers land in `C:\t\release\bundle\nsis\` (EXE) and `C:\t\release\bundle\msi\` (MSI).
+
+This compiles a release binary and generates platform-specific bundles (deb, rpm, AppImage on Linux; dmg on macOS; msi + NSIS on Windows).
 
 ## Linux Install (from source)
 
@@ -196,3 +208,26 @@ git config --global core.longpaths true
 
 Restart your shell (or reboot) afterward so the change takes effect. If a build
 still trips on the limit, fall back to option 1.
+
+### Windows build fails with `program not found` (code signing)
+
+If `bun run tauri build` fails at the packaging stage with:
+
+```
+failed to bundle project: program not found
+```
+
+This happens because `tauri.conf.json` specifies a custom `signCommand` that calls `trusted-signing-cli` (an Azure code signing tool). Unless you have the developer's Azure certificate, pass `--no-sign`:
+
+```powershell
+$env:CARGO_TARGET_DIR = "C:\t"
+bun run tauri build --no-sign
+```
+
+### Quick Reference: Windows Release Build
+
+Combining both workarounds into one command:
+
+```powershell
+$env:CARGO_TARGET_DIR = "C:\t"; bun run tauri build --no-sign
+```

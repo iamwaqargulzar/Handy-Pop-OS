@@ -14,6 +14,7 @@ interface HandyKeysShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  plain?: boolean;
 }
 
 interface HandyKeysEvent {
@@ -28,6 +29,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   grouped = false,
   shortcutId,
   disabled = false,
+  plain = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -228,21 +230,13 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     );
   }
 
-  const binding = bindings[shortcutId];
-  if (!binding) {
-    return (
-      <SettingContainer
-        title={t("settings.general.shortcut.title")}
-        description={t("settings.general.shortcut.notFound")}
-        descriptionMode={descriptionMode}
-        grouped={grouped}
-      >
-        <div className="text-sm text-mid-gray">
-          {t("settings.general.shortcut.none")}
-        </div>
-      </SettingContainer>
-    );
-  }
+  const binding = bindings[shortcutId] || {
+    id: shortcutId,
+    name: "Model Switch",
+    description: `Switch active model to ${shortcutId.replace("model:", "")}`,
+    default_binding: "",
+    current_binding: "",
+  };
 
   // Get translated name and description for the binding
   const translatedName = t(
@@ -254,6 +248,34 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     binding.description,
   );
 
+  const innerContent = (
+    <div className="flex items-center space-x-1">
+      {isRecording ? (
+        <div
+          ref={shortcutRef}
+          className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md animate-pulse"
+        >
+          {formatCurrentKeys() || "Press keys..."}
+        </div>
+      ) : (
+        <div
+          className="px-2 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 hover:bg-logo-primary/10 rounded-md cursor-pointer hover:border-logo-primary min-w-[70px] text-center"
+          onClick={startRecording}
+        >
+          {formatKeyCombination(binding.current_binding, osType) || "None"}
+        </div>
+      )}
+      <ResetButton
+        onClick={() => resetBinding(shortcutId)}
+        disabled={isUpdating(`binding_${shortcutId}`)}
+      />
+    </div>
+  );
+
+  if (plain) {
+    return innerContent;
+  }
+
   return (
     <SettingContainer
       title={translatedName}
@@ -263,27 +285,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       disabled={disabled}
       layout="horizontal"
     >
-      <div className="flex items-center space-x-1">
-        {isRecording ? (
-          <div
-            ref={shortcutRef}
-            className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md"
-          >
-            {formatCurrentKeys()}
-          </div>
-        ) : (
-          <div
-            className="px-2 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 hover:bg-logo-primary/10 rounded-md cursor-pointer hover:border-logo-primary"
-            onClick={startRecording}
-          >
-            {formatKeyCombination(binding.current_binding, osType)}
-          </div>
-        )}
-        <ResetButton
-          onClick={() => resetBinding(shortcutId)}
-          disabled={isUpdating(`binding_${shortcutId}`)}
-        />
-      </div>
+      {innerContent}
     </SettingContainer>
   );
 };

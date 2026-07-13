@@ -44,6 +44,20 @@ pub fn handle_shortcut_event(
         return;
     }
 
+    // Model switch bindings are handled by switching the active model.
+    if binding_id.starts_with("model:") {
+        if is_pressed {
+            let model_id = &binding_id[6..];
+            log::info!("Model hotkey triggered switch to: {}", model_id);
+            if let Err(e) = crate::commands::models::switch_active_model(app, model_id) {
+                log::error!("Failed to switch model via hotkey: {}", e);
+            } else {
+                crate::audio_feedback::play_test_sound(app, crate::audio_feedback::SoundType::Start);
+            }
+        }
+        return;
+    }
+
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!(
             "No action defined in ACTION_MAP for shortcut ID '{}'. Shortcut: '{}', Pressed: {}",

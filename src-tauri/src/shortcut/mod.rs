@@ -110,8 +110,8 @@ pub fn change_binding(
     id: String,
     binding: String,
 ) -> Result<BindingResponse, String> {
-    // Reject empty bindings — every shortcut should have a value
-    if binding.trim().is_empty() {
+    // Reject empty bindings unless it's a model shortcut
+    if binding.trim().is_empty() && !id.starts_with("model:") {
         return Err("Binding cannot be empty".to_string());
     }
 
@@ -121,24 +121,36 @@ pub fn change_binding(
     let binding_to_modify = match settings.bindings.get(&id) {
         Some(binding) => binding.clone(),
         None => {
-            // Try to get the default binding for this id
-            let default_settings = settings::get_default_settings();
-            match default_settings.bindings.get(&id) {
-                Some(default_binding) => {
-                    warn!(
-                        "Binding '{}' not found in settings, creating from defaults",
-                        id
-                    );
-                    default_binding.clone()
+            if id.starts_with("model:") {
+                // Construct a new model shortcut binding on-the-fly
+                let model_id = &id[6..];
+                ShortcutBinding {
+                    id: id.clone(),
+                    name: "Model Switch".to_string(),
+                    description: format!("Switch to model {}", model_id),
+                    default_binding: "".to_string(),
+                    current_binding: "".to_string(),
                 }
-                None => {
-                    let error_msg = format!("Binding with id '{}' not found in defaults", id);
-                    warn!("change_binding error: {}", error_msg);
-                    return Ok(BindingResponse {
-                        success: false,
-                        binding: None,
-                        error: Some(error_msg),
-                    });
+            } else {
+                // Try to get the default binding for this id
+                let default_settings = settings::get_default_settings();
+                match default_settings.bindings.get(&id) {
+                    Some(default_binding) => {
+                        warn!(
+                            "Binding '{}' not found in settings, creating from defaults",
+                            id
+                        );
+                        default_binding.clone()
+                    }
+                    None => {
+                        let error_msg = format!("Binding with id '{}' not found in defaults", id);
+                        warn!("change_binding error: {}", error_msg);
+                        return Ok(BindingResponse {
+                            success: false,
+                            binding: None,
+                            error: Some(error_msg),
+                        });
+                    }
                 }
             }
         }
@@ -165,26 +177,28 @@ pub fn change_binding(
         error!("change_binding error: {}", error_msg);
     }
 
-    // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-    {
-        warn!("change_binding validation error: {}", e);
-        return Err(e);
-    }
-
     // Create an updated binding
     let mut updated_binding = binding_to_modify;
-    updated_binding.current_binding = binding;
+    updated_binding.current_binding = binding.clone();
 
-    // Register the new binding
-    if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
-        let error_msg = format!("Failed to register shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-        return Ok(BindingResponse {
-            success: false,
-            binding: None,
-            error: Some(error_msg),
-        });
+    if !binding.trim().is_empty() && binding.to_lowercase() != "none" {
+        // Validate the new shortcut for the current keyboard implementation
+        if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
+        {
+            warn!("change_binding validation error: {}", e);
+            return Err(e);
+        }
+
+        // Register the new binding
+        if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
+            let error_msg = format!("Failed to register shortcut: {}", e);
+            error!("change_binding error: {}", error_msg);
+            return Ok(BindingResponse {
+                success: false,
+                binding: None,
+                error: Some(error_msg),
+            });
+        }
     }
 
     // Update the binding in the settings
@@ -386,7 +400,10 @@ fn register_all_shortcuts_for_implementation(
     let default_bindings = settings::get_default_settings().bindings;
     let mut current_settings = settings::get_settings(app);
 
-    for (id, default_binding) in &default_bindings {
+    // Extract all binding IDs from current settings to avoid borrowing issues
+    let binding_ids: Vec<String> = current_settings.bindings.keys().cloned().collect();
+
+    for id in binding_ids {
         // Skip cancel shortcut as it's dynamically registered
         if id == "cancel" {
             continue;
@@ -397,11 +414,12 @@ fn register_all_shortcuts_for_implementation(
             continue;
         }
 
-        let mut binding = current_settings
-            .bindings
-            .get(id)
-            .cloned()
-            .unwrap_or_else(|| default_binding.clone());
+        let mut binding = current_settings.bindings.get(&id).unwrap().clone();
+
+        // Skip registering if it's empty or "none" (usually custom model shortcuts)
+        if binding.current_binding.is_empty() || binding.current_binding.to_lowercase() == "none" {
+            continue;
+        }
 
         // Validate the shortcut for the target implementation
         if let Err(e) =
@@ -412,12 +430,17 @@ fn register_all_shortcuts_for_implementation(
                 id, binding.current_binding, implementation, e
             );
 
-            // Reset to default
-            binding.current_binding = default_binding.current_binding.clone();
-            current_settings
-                .bindings
-                .insert(id.clone(), binding.clone());
-            reset_bindings.push(id.clone());
+            // Reset to default if a default exists, otherwise keep or clear
+            if let Some(default_binding) = default_bindings.get(&id) {
+                binding.current_binding = default_binding.current_binding.clone();
+                current_settings
+                    .bindings
+                    .insert(id.clone(), binding.clone());
+                reset_bindings.push(id.clone());
+            } else {
+                // If it's a dynamic model shortcut, clear it or ignore it
+                continue;
+            }
         }
 
         // Register with the appropriate implementation
@@ -966,6 +989,20 @@ pub fn change_post_process_model_setting(
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
     settings.post_process_models.insert(provider_id, model);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_post_process_reasoning_effort_setting(
+    app: AppHandle,
+    provider_id: String,
+    reasoning_effort: String,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    validate_provider_exists(&settings, &provider_id)?;
+    settings.post_process_reasoning_efforts.insert(provider_id, reasoning_effort);
     settings::write_settings(&app, settings);
     Ok(())
 }

@@ -85,6 +85,57 @@ pub struct FrontendKeyEvent {
     pub hotkey_string: String,
 }
 
+#[cfg(target_os = "windows")]
+#[link(name = "wtsapi32")]
+extern "system" {
+    fn WTSQuerySessionInformationW(
+        hserver: *mut std::ffi::c_void,
+        sessionid: u32,
+        winfoclass: u32,
+        ppbuffer: *mut *mut u8,
+        pbytesreturned: *mut u32,
+    ) -> i32;
+    
+    fn WTSFreeMemory(pmemory: *mut std::ffi::c_void);
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn is_session_locked() -> bool {
+    let mut buffer: *mut u8 = std::ptr::null_mut();
+    let mut bytes_returned: u32 = 0;
+    
+    // WTS_CURRENT_SERVER_HANDLE = null
+    // WTS_CURRENT_SESSION = 0xFFFFFFFF
+    // WTSSessionInfoEx = 25
+    let success = WTSQuerySessionInformationW(
+        std::ptr::null_mut(),
+        0xFFFFFFFF,
+        25,
+        &mut buffer,
+        &mut bytes_returned,
+    );
+    
+    if success != 0 && !buffer.is_null() && bytes_returned >= 16 {
+        let level = *(buffer as *const u32);
+        if level == 1 {
+            let session_flags = *(buffer.offset(16) as *const i32);
+            WTSFreeMemory(buffer as *mut std::ffi::c_void);
+            return session_flags == 0;
+        }
+    }
+    
+    if !buffer.is_null() {
+        WTSFreeMemory(buffer as *mut std::ffi::c_void);
+    }
+    
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+unsafe fn is_session_locked() -> bool {
+    false
+}
+
 impl HandyKeysState {
     /// Create a new HandyKeysState
     pub fn new(app: AppHandle) -> Result<Self, String> {
@@ -111,7 +162,7 @@ impl HandyKeysState {
         info!("handy-keys manager thread started");
 
         // Create the HotkeyManager in this thread
-        let manager = match HotkeyManager::new_with_blocking() {
+        let mut manager = match HotkeyManager::new_with_blocking() {
             Ok(m) => m,
             Err(e) => {
                 error!("Failed to create HotkeyManager: {}", e);
@@ -123,7 +174,94 @@ impl HandyKeysState {
         let mut binding_to_hotkey: HashMap<String, HotkeyId> = HashMap::new();
         let mut hotkey_to_binding: HashMap<HotkeyId, (String, String)> = HashMap::new(); // (binding_id, hotkey_string)
 
+        let mut last_tick = std::time::Instant::now();
+        let mut was_locked = false;
+        let mut last_session_check = std::time::Instant::now();
+
         loop {
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(last_tick);
+            last_tick = now;
+
+            // Session Lock/Unlock Watchdog: Windows silently drops low-level hooks when 
+            // transitioning to/from the secure desktop (lock screen). We check lock state 
+            // every second and reinstall the hooks upon transition back to unlocked desktop.
+            if now.duration_since(last_session_check) >= std::time::Duration::from_secs(1) {
+                last_session_check = now;
+                let is_locked = unsafe { is_session_locked() };
+                if is_locked {
+                    if !was_locked {
+                        info!("Session lock state detected. Watchdog mapping set to locked.");
+                        was_locked = true;
+                    }
+                } else if was_locked {
+                    info!("Session unlock state detected. Restoring global shortcut hooks...");
+                    was_locked = false;
+
+                    let old_bindings: Vec<(String, String)> = hotkey_to_binding.values().cloned().collect();
+                    binding_to_hotkey.clear();
+                    hotkey_to_binding.clear();
+
+                    match HotkeyManager::new_with_blocking() {
+                        Ok(new_manager) => {
+                            manager = new_manager;
+                            info!("Recreated HotkeyManager successfully after session unlock.");
+                            for (binding_id, hotkey_string) in old_bindings {
+                                if let Err(e) = Self::do_register(
+                                    &manager,
+                                    &mut binding_to_hotkey,
+                                    &mut hotkey_to_binding,
+                                    &binding_id,
+                                    &hotkey_string,
+                                ) {
+                                    error!("Failed to re-register hotkey '{}' after session unlock: {}", binding_id, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to recreate HotkeyManager after session unlock: {}", e);
+                        }
+                    }
+                }
+            }
+
+            // Watchdog: If the loop took longer than 5 seconds (e.g. due to system suspend/sleep or heavy OS lag),
+            // Windows silently uninstalls WH_KEYBOARD_LL hooks. Recreate HotkeyManager to restore hooks.
+            if elapsed > std::time::Duration::from_secs(5) {
+                info!(
+                    "System sleep/resume or lock detected (elapsed: {:?}). Re-registering handy-keys hooks...",
+                    elapsed
+                );
+
+                let old_bindings: Vec<(String, String)> = hotkey_to_binding.values().cloned().collect();
+                binding_to_hotkey.clear();
+                hotkey_to_binding.clear();
+
+                match HotkeyManager::new_with_blocking() {
+                    Ok(new_manager) => {
+                        manager = new_manager;
+                        info!("Recreated HotkeyManager successfully after resume.");
+                        for (binding_id, hotkey_string) in old_bindings {
+                            if let Err(e) = Self::do_register(
+                                &manager,
+                                &mut binding_to_hotkey,
+                                &mut hotkey_to_binding,
+                                &binding_id,
+                                &hotkey_string,
+                            ) {
+                                error!("Failed to re-register hotkey '{}' after resume: {}", binding_id, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to recreate HotkeyManager after resume: {}", e);
+                    }
+                }
+                
+                // Reset last_tick to prevent immediate double triggering
+                last_tick = std::time::Instant::now();
+            }
+
             // Check for hotkey events (non-blocking)
             while let Some(event) = manager.try_recv() {
                 if let Some((binding_id, hotkey_string)) = hotkey_to_binding.get(&event.id) {
