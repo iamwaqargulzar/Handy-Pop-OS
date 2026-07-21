@@ -338,12 +338,12 @@ export const useSettingsStore = create<SettingsStore>()(
                 ...state.settings,
                 bindings: {
                   ...state.settings.bindings,
-                  [id]: {
+                   [id]: {
                     id,
                     name: "Model Switch",
                     description: `Switch to model ${id.replace("model:", "")}`,
                     default_binding: "",
-                    ...(state.settings.bindings[id] || {}),
+                    ...(state.settings.bindings?.[id] || {}),
                     current_binding: binding,
                   },
                 },
@@ -378,7 +378,7 @@ export const useSettingsStore = create<SettingsStore>()(
                       name: "Model Switch",
                       description: `Switch to model ${id.replace("model:", "")}`,
                       default_binding: "",
-                      ...(state.settings.bindings[id] || {}),
+                      ...(state.settings.bindings?.[id] || {}),
                       current_binding: originalBinding || "",
                     },
                   },
