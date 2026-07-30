@@ -95,7 +95,7 @@ extern "system" {
         ppbuffer: *mut *mut u8,
         pbytesreturned: *mut u32,
     ) -> i32;
-    
+
     fn WTSFreeMemory(pmemory: *mut std::ffi::c_void);
 }
 
@@ -103,7 +103,7 @@ extern "system" {
 unsafe fn is_session_locked() -> bool {
     let mut buffer: *mut u8 = std::ptr::null_mut();
     let mut bytes_returned: u32 = 0;
-    
+
     // WTS_CURRENT_SERVER_HANDLE = null
     // WTS_CURRENT_SESSION = 0xFFFFFFFF
     // WTSSessionInfoEx = 25
@@ -114,7 +114,7 @@ unsafe fn is_session_locked() -> bool {
         &mut buffer,
         &mut bytes_returned,
     );
-    
+
     if success != 0 && !buffer.is_null() && bytes_returned >= 16 {
         let level = *(buffer as *const u32);
         if level == 1 {
@@ -123,17 +123,16 @@ unsafe fn is_session_locked() -> bool {
             return session_flags == 0;
         }
     }
-    
+
     if !buffer.is_null() {
         WTSFreeMemory(buffer as *mut std::ffi::c_void);
     }
-    
+
     false
 }
 
-#[cfg(not(target_os = "windows"))]
-unsafe fn is_session_locked() -> bool {
-    false
+fn should_recover_after_gap(elapsed: std::time::Duration) -> bool {
+    elapsed > std::time::Duration::from_secs(5)
 }
 
 impl HandyKeysState {
@@ -175,7 +174,9 @@ impl HandyKeysState {
         let mut hotkey_to_binding: HashMap<HotkeyId, (String, String)> = HashMap::new(); // (binding_id, hotkey_string)
 
         let mut last_tick = std::time::Instant::now();
+        #[cfg(target_os = "windows")]
         let mut was_locked = false;
+        #[cfg(target_os = "windows")]
         let mut last_session_check = std::time::Instant::now();
 
         loop {
@@ -183,57 +184,66 @@ impl HandyKeysState {
             let elapsed = now.duration_since(last_tick);
             last_tick = now;
 
-            // Session Lock/Unlock Watchdog: Windows silently drops low-level hooks when 
-            // transitioning to/from the secure desktop (lock screen). We check lock state 
-            // every second and reinstall the hooks upon transition back to unlocked desktop.
-            if now.duration_since(last_session_check) >= std::time::Duration::from_secs(1) {
-                last_session_check = now;
-                let is_locked = unsafe { is_session_locked() };
-                if is_locked {
-                    if !was_locked {
-                        info!("Session lock state detected. Watchdog mapping set to locked.");
-                        was_locked = true;
-                    }
-                } else if was_locked {
-                    info!("Session unlock state detected. Restoring global shortcut hooks...");
-                    was_locked = false;
+            #[cfg(target_os = "windows")]
+            {
+                // Windows can drop low-level hooks while transitioning through
+                // the secure desktop. Poll the WTS session state once per
+                // second and restore the hooks after unlock.
+                if now.duration_since(last_session_check) >= std::time::Duration::from_secs(1) {
+                    last_session_check = now;
+                    let is_locked = unsafe { is_session_locked() };
+                    if is_locked {
+                        if !was_locked {
+                            info!("Session lock state detected. Watchdog mapping set to locked.");
+                            was_locked = true;
+                        }
+                    } else if was_locked {
+                        info!("Session unlock state detected. Restoring global shortcut hooks...");
+                        was_locked = false;
 
-                    let old_bindings: Vec<(String, String)> = hotkey_to_binding.values().cloned().collect();
-                    binding_to_hotkey.clear();
-                    hotkey_to_binding.clear();
+                        let old_bindings: Vec<(String, String)> =
+                            hotkey_to_binding.values().cloned().collect();
+                        binding_to_hotkey.clear();
+                        hotkey_to_binding.clear();
 
-                    match HotkeyManager::new_with_blocking() {
-                        Ok(new_manager) => {
-                            manager = new_manager;
-                            info!("Recreated HotkeyManager successfully after session unlock.");
-                            for (binding_id, hotkey_string) in old_bindings {
-                                if let Err(e) = Self::do_register(
-                                    &manager,
-                                    &mut binding_to_hotkey,
-                                    &mut hotkey_to_binding,
-                                    &binding_id,
-                                    &hotkey_string,
-                                ) {
-                                    error!("Failed to re-register hotkey '{}' after session unlock: {}", binding_id, e);
+                        match HotkeyManager::new_with_blocking() {
+                            Ok(new_manager) => {
+                                manager = new_manager;
+                                info!("Recreated HotkeyManager successfully after session unlock.");
+                                for (binding_id, hotkey_string) in old_bindings {
+                                    if let Err(e) = Self::do_register(
+                                        &manager,
+                                        &mut binding_to_hotkey,
+                                        &mut hotkey_to_binding,
+                                        &binding_id,
+                                        &hotkey_string,
+                                    ) {
+                                        error!("Failed to re-register hotkey '{}' after session unlock: {}", binding_id, e);
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            error!("Failed to recreate HotkeyManager after session unlock: {}", e);
+                            Err(e) => {
+                                error!(
+                                    "Failed to recreate HotkeyManager after session unlock: {}",
+                                    e
+                                );
+                            }
                         }
                     }
                 }
             }
 
-            // Watchdog: If the loop took longer than 5 seconds (e.g. due to system suspend/sleep or heavy OS lag),
-            // Windows silently uninstalls WH_KEYBOARD_LL hooks. Recreate HotkeyManager to restore hooks.
-            if elapsed > std::time::Duration::from_secs(5) {
+            // A long loop gap can indicate suspend/resume or severe scheduling
+            // delay. Recreate the manager as a best-effort recovery on every
+            // platform; this does not bypass Wayland shortcut restrictions.
+            if should_recover_after_gap(elapsed) {
                 info!(
                     "System sleep/resume or lock detected (elapsed: {:?}). Re-registering handy-keys hooks...",
                     elapsed
                 );
 
-                let old_bindings: Vec<(String, String)> = hotkey_to_binding.values().cloned().collect();
+                let old_bindings: Vec<(String, String)> =
+                    hotkey_to_binding.values().cloned().collect();
                 binding_to_hotkey.clear();
                 hotkey_to_binding.clear();
 
@@ -249,7 +259,10 @@ impl HandyKeysState {
                                 &binding_id,
                                 &hotkey_string,
                             ) {
-                                error!("Failed to re-register hotkey '{}' after resume: {}", binding_id, e);
+                                error!(
+                                    "Failed to re-register hotkey '{}' after resume: {}",
+                                    binding_id, e
+                                );
                             }
                         }
                     }
@@ -257,7 +270,7 @@ impl HandyKeysState {
                         error!("Failed to recreate HotkeyManager after resume: {}", e);
                     }
                 }
-                
+
                 // Reset last_tick to prevent immediate double triggering
                 last_tick = std::time::Instant::now();
             }
@@ -684,4 +697,18 @@ pub fn stop_handy_keys_recording(app: AppHandle) -> Result<(), String> {
         .try_state::<HandyKeysState>()
         .ok_or("HandyKeysState not initialized")?;
     state.stop_recording()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_recover_after_gap;
+    use std::time::Duration;
+
+    #[test]
+    fn recovery_starts_only_after_five_seconds() {
+        assert!(!should_recover_after_gap(Duration::from_secs(5)));
+        assert!(should_recover_after_gap(
+            Duration::from_secs(5) + Duration::from_millis(1)
+        ));
+    }
 }
