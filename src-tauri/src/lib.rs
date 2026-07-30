@@ -782,20 +782,25 @@ pub fn run(cli_args: CliArgs) {
                 crate::utils::cancel_current_operation(app);
             } else if let Some(model_query) = load_model_value {
                 let query = model_query.to_lowercase();
-                let model_manager = app.state::<std::sync::Arc<crate::managers::model::ModelManager>>();
+                let model_manager =
+                    app.state::<std::sync::Arc<crate::managers::model::ModelManager>>();
                 let models = model_manager.get_available_models();
-                let matched_model = models
-                    .iter()
-                    .filter(|m| m.is_downloaded)
-                    .find(|m| m.id.to_lowercase().contains(&query) || m.name.to_lowercase().contains(&query));
+                let matched_model = models.iter().filter(|m| m.is_downloaded).find(|m| {
+                    m.id.to_lowercase().contains(&query) || m.name.to_lowercase().contains(&query)
+                });
 
                 if let Some(target_model) = matched_model {
                     log::info!("CLI request to switch model to: {}", target_model.id);
-                    if let Err(e) = crate::commands::models::switch_active_model(app, &target_model.id) {
+                    if let Err(e) =
+                        crate::commands::models::switch_active_model(app, &target_model.id)
+                    {
                         log::error!("Failed to switch model via CLI: {}", e);
                     } else {
                         // Play start audio chime to confirm model switch!
-                        crate::audio_feedback::play_test_sound(app, crate::audio_feedback::SoundType::Start);
+                        crate::audio_feedback::play_test_sound(
+                            app,
+                            crate::audio_feedback::SoundType::Start,
+                        );
                     }
                 } else {
                     log::warn!("No downloaded model matches CLI query: {}", model_query);

@@ -184,7 +184,8 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             }),
         ),
         _ => {
-            let effort = settings.post_process_reasoning_efforts
+            let effort = settings
+                .post_process_reasoning_efforts
                 .get(&provider.id)
                 .cloned()
                 .unwrap_or_else(|| "default".to_string());
@@ -265,7 +266,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         let mut transcription_output = None;
 
         for current_model in &models_to_try {
-            debug!("Attempting structured output with model '{}'", current_model);
+            debug!(
+                "Attempting structured output with model '{}'",
+                current_model
+            );
             match crate::llm_client::send_chat_completion_with_schema(
                 &provider,
                 api_key.clone(),
@@ -314,7 +318,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                     }
                 }
                 Ok(None) => {
-                    warn!("LLM API response from model '{}' had no content, attempting fallback...", current_model);
+                    warn!(
+                        "LLM API response from model '{}' had no content, attempting fallback...",
+                        current_model
+                    );
                     last_structured_error = Some("API response has no content".to_string());
                 }
                 Err(e) => {
@@ -342,7 +349,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
     for current_model in &models_to_try {
-        debug!("Attempting legacy post-processing with model '{}'", current_model);
+        debug!(
+            "Attempting legacy post-processing with model '{}'",
+            current_model
+        );
         match crate::llm_client::send_chat_completion(
             &provider,
             api_key.clone(),
@@ -375,7 +385,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         }
     }
 
-    error!("All models failed for provider '{}'. Falling back to original transcription.", provider.id);
+    error!(
+        "All models failed for provider '{}'. Falling back to original transcription.",
+        provider.id
+    );
     None
 }
 

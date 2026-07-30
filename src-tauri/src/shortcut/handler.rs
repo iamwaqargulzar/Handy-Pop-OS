@@ -52,7 +52,10 @@ pub fn handle_shortcut_event(
             if let Err(e) = crate::commands::models::switch_active_model(app, model_id) {
                 log::error!("Failed to switch model via hotkey: {}", e);
             } else {
-                crate::audio_feedback::play_test_sound(app, crate::audio_feedback::SoundType::Start);
+                crate::audio_feedback::play_test_sound(
+                    app,
+                    crate::audio_feedback::SoundType::Start,
+                );
             }
         }
         return;

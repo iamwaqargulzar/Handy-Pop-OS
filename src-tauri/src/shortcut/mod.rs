@@ -183,7 +183,8 @@ pub fn change_binding(
 
     if !binding.trim().is_empty() && binding.to_lowercase() != "none" {
         // Validate the new shortcut for the current keyboard implementation
-        if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
+        if let Err(e) =
+            validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
         {
             warn!("change_binding validation error: {}", e);
             return Err(e);
@@ -1049,7 +1050,9 @@ pub fn change_post_process_reasoning_effort_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
-    settings.post_process_reasoning_efforts.insert(provider_id, reasoning_effort);
+    settings
+        .post_process_reasoning_efforts
+        .insert(provider_id, reasoning_effort);
     settings::write_settings(&app, settings);
     Ok(())
 }
