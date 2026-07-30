@@ -403,7 +403,7 @@ Expected: all commands pass.
 Run:
 
 ```bash
-bun run tauri build -- --bundles deb
+bun run tauri build --bundles deb --no-sign
 ```
 
 Expected: Tauri creates a `.deb` under `src-tauri/target/release/bundle/deb/`.

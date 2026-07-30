@@ -127,7 +127,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 Build only the Debian bundle:
 
 ```bash
-bun run tauri build -- --bundles deb
+bun run tauri build --bundles deb --no-sign
 ```
 
 The package is written under:
@@ -136,8 +136,9 @@ The package is written under:
 src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
 ```
 
-Linux does not need the Windows `--no-sign` or short
-`CARGO_TARGET_DIR` workarounds.
+The repository contains the public updater key used for official releases.
+Local builds without the matching private key must pass `--no-sign`. Linux
+does not need the Windows short `CARGO_TARGET_DIR` workaround.
 
 ## Install or inspect the package
 
@@ -206,7 +207,7 @@ Build only the Debian package if AppImage bundling fails on Ubuntu 24.04 or
 newer:
 
 ```bash
-bun run tauri build -- --bundles deb
+bun run tauri build --bundles deb --no-sign
 ```
 
 If Vulkan shader generation fails:
