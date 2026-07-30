@@ -70,7 +70,11 @@ ORT_LIB_LOCATION=$(brew --prefix onnxruntime)/lib ORT_PREFER_DYNAMIC_LINK=1 bun 
   ```bash
   # Ubuntu/Debian
   sudo apt update
-  sudo apt install build-essential libasound2-dev pkg-config libssl-dev libvulkan-dev vulkan-tools glslc spirv-headers glslang-tools libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-layer-shell0 libgtk-layer-shell-dev patchelf cmake
+  sudo apt install build-essential libasound2-dev pkg-config libssl-dev \
+    libvulkan-dev vulkan-tools glslc spirv-headers glslang-tools \
+    libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+    librsvg2-dev libgtk-layer-shell0 libgtk-layer-shell-dev \
+    libopenblas-dev patchelf cmake xdg-utils wtype
 
   # Fedora/RHEL
   sudo dnf groupinstall "Development Tools"
@@ -132,19 +136,22 @@ This compiles a release binary and generates platform-specific bundles (deb, rpm
 
 The raw binary (`src-tauri/target/release/handy`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.
 
-**Install from the deb bundle** (works on any Linux distro):
+**Install from the deb bundle** (recommended on Debian-based distributions):
 
 ```bash
-cd /tmp
-ar x /path/to/Handy/src-tauri/target/release/bundle/deb/Handy_*_amd64.deb data.tar.gz
-tar xzf data.tar.gz
-sudo cp usr/bin/handy /usr/bin/
-sudo cp -a usr/lib/. /usr/lib/
-sudo cp -r usr/share/icons/hicolor/* /usr/share/icons/hicolor/
-sudo cp usr/share/applications/Handy.desktop /usr/share/applications/
+sudo apt install ./src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
 ```
 
 The runtime libraries live in the app-private `/usr/lib/Handy/` (on the binary's rpath), so no `ldconfig` step is needed.
+
+To inspect a bundle without installing it:
+
+```bash
+inspection_dir="$(mktemp -d)"
+dpkg-deb -x src-tauri/target/release/bundle/deb/Handy_*_amd64.deb \
+  "$inspection_dir"
+find "$inspection_dir" -maxdepth 4 -type f -print
+```
 
 After subsequent rebuilds, copy the binary and any refreshed runtime libraries:
 

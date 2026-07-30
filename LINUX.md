@@ -1,64 +1,48 @@
-# Handy-NPU — Linux Build & Deployment Guide (Pop!_OS / Ubuntu)
+# Handy — Pop!_OS Build and Deployment Guide
 
-> **Branch**: `codex/whisper-npu-v0.9.0` (based on upstream `v0.9.3`)
->
-> This document covers everything needed to build and run the custom Handy-NPU
-> fork on **Pop!_OS** (and any Ubuntu/Debian-based distro). It lists every
-> custom feature, explains which ones carry over to Linux and which are
-> Windows-only, and provides copy-paste build instructions.
+This guide covers the current Handy `0.9.4` source tree on Pop!_OS 24.04 and
+other Ubuntu/Debian-based distributions. The retired Windows-only Intel NPU
+experiment is not part of this Linux build.
 
----
+Tracked Windows source and installer configuration may remain in the
+repository. Rust and Tauri select platform-specific code at build time, so
+those files do not interfere with a Linux build. Generated directories such
+as `node_modules/`, `dist/`, `src-tauri/target/`, and
+`src-tauri/transcribe-libs/` can be regenerated and should not be copied
+between operating systems.
 
-## Table of Contents
+## Supported custom behavior
 
-1. [Feature Matrix — Linux vs Windows](#1-feature-matrix--linux-vs-windows)
-2. [Prerequisites (Pop!_OS / Ubuntu)](#2-prerequisites-popos--ubuntu)
-3. [Clone & Build](#3-clone--build)
-4. [Install the .deb Package](#4-install-the-deb-package)
-5. [Vulkan GPU Acceleration](#5-vulkan-gpu-acceleration)
-6. [Custom Feature Details (All Platforms)](#6-custom-feature-details-all-platforms)
-7. [Windows-Only Features (Excluded on Linux)](#7-windows-only-features-excluded-on-linux)
-8. [Troubleshooting](#8-troubleshooting)
+The Linux build retains:
 
----
+- Local transcription with CPU and Vulkan backends
+- Three-level post-processing model fallback
+- Per-provider reasoning-effort settings
+- Global hotkeys for switching downloaded models
+- CLI model switching with `handy --load-model <query>`
+- A dark neutral interface with a cool accent
+- Best-effort shortcut re-registration after a suspend/resume time gap
 
-## 1. Feature Matrix — Linux vs Windows
+The Win32 WTS session lock watcher remains Windows-only. On Linux, the
+platform-neutral elapsed-time watchdog can recover shortcuts after a long
+pause, but it cannot bypass compositor security restrictions.
 
-| Feature | Linux (Pop!_OS) | Windows |
-|---|:---:|:---:|
-| Local Whisper transcription (CPU) | ✅ | ✅ |
-| Vulkan GPU acceleration | ✅ | ✅ |
-| Dynamic CPU ISA backends (AVX2, AVX-512, etc.) | ✅ | ✅ |
-| Multi-model fallback chain (Priority 1/2/3) | ✅ | ✅ |
-| Post-processing reasoning effort control | ✅ | ✅ |
-| Dynamic model-switch global hotkeys | ✅ | ✅ |
-| CLI `--load-model <name>` switching | ✅ | ✅ |
-| Logitech G HUB / macro mouse integration | ✅ (via CLI) | ✅ |
-| GTK overlay transcription window | ✅ (native) | N/A (Webview) |
-| Sleep/resume watchdog (time-delta) | ✅ | ✅ |
-| WTS session lock/unlock watchdog | ❌ (not needed) | ✅ |
-| Intel OpenVINO NPU server | ❌ (Windows-only) | ✅ |
-| NSIS / MSI installer | ❌ | ✅ |
-| `.deb` / `.rpm` / `.AppImage` installer | ✅ | ❌ |
+## Dependency locations
 
-### Why the WTS watchdog isn't needed on Linux
+Dependencies are intentionally installed at the broadest sensible scope:
 
-On Windows, locking the screen silently strips low-level keyboard hooks
-(without suspending background threads), so a dedicated Win32 WTS API watcher
-is required to detect lock→unlock transitions and re-register hooks.
+- `apt` packages are distribution-managed system dependencies and can be
+  reused by other projects.
+- Rust and Bun are installed once for the current user and reused across
+  projects.
+- `node_modules/`, Cargo output, and generated transcription libraries remain
+  project-specific because their exact versions and build options belong to
+  this application.
 
-Linux desktop environments (GNOME, KDE, etc.) do **not** strip input hooks on
-screen lock. The code compiles a no-op stub for `is_session_locked()` on Linux
-(`#[cfg(not(target_os = "windows"))]` → always returns `false`), so this
-feature safely compiles out.
+Do not manually copy development libraries into `/usr/lib`. The packaged
+Handy runtime libraries belong in the private `/usr/lib/Handy/` directory.
 
----
-
-## 2. Prerequisites (Pop!_OS / Ubuntu)
-
-Pop!_OS is Ubuntu-based, so all Ubuntu/Debian packages apply directly.
-
-### 2.1 System Packages
+## Install prerequisites
 
 ```bash
 sudo apt update
@@ -79,10 +63,13 @@ sudo apt install -y \
   librsvg2-dev \
   libgtk-layer-shell0 \
   libgtk-layer-shell-dev \
-  patchelf
+  libopenblas-dev \
+  patchelf \
+  xdg-utils \
+  wtype
 ```
 
-### 2.2 Rust (latest stable)
+Install Rust for the current user:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -90,383 +77,160 @@ source "$HOME/.cargo/env"
 rustup default stable
 ```
 
-### 2.3 Bun (JavaScript runtime & package manager)
+Install Bun for the current user:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
-source ~/.bashrc   # or restart your terminal
+source "$HOME/.bashrc"
 ```
 
-### 2.4 Vulkan Drivers
-
-**NVIDIA (Pop!_OS ships these pre-installed on the NVIDIA ISO):**
+Verify Vulkan:
 
 ```bash
-# Verify Vulkan is working:
 vulkaninfo --summary
 ```
 
-If `vulkaninfo` shows your GPU, you're good. If not:
+Pop!_OS normally provides the appropriate Mesa or NVIDIA runtime through its
+normal driver tooling. Prefer the distribution's current recommended driver;
+do not pin an old driver version from this guide.
 
-```bash
-# Pop!_OS NVIDIA ISO already includes drivers, but if needed:
-sudo apt install nvidia-driver-560   # or the latest available
-```
+## Prepare the source
 
-**AMD (Mesa RADV — ships with Pop!_OS):**
-
-```bash
-sudo apt install mesa-vulkan-drivers
-vulkaninfo --summary
-```
-
-**Intel (ANV):**
-
-```bash
-sudo apt install mesa-vulkan-drivers intel-gpu-tools
-vulkaninfo --summary
-```
-
----
-
-## 3. Clone & Build
-
-### 3.1 Clone the Fork
-
-```bash
-git clone https://github.com/<your-fork>/Handy.git Handy-npu
-cd Handy-npu
-git checkout codex/whisper-npu-v0.9.0
-```
-
-> **Note**: Replace `<your-fork>` with the actual repository URL. If working
-> from a local copy (e.g., USB transfer from the Windows machine), just `cd`
-> into the directory and ensure you're on the correct branch.
-
-### 3.2 Install Frontend Dependencies
+From the repository root:
 
 ```bash
 bun install
+mkdir -p src-tauri/resources/models
+curl -o src-tauri/resources/models/silero_vad_v4.onnx \
+  https://blob.handy.computer/silero_vad_v4.onnx
 ```
 
-### 3.3 Development Mode
+If the VAD model already exists, the download is unnecessary.
+
+Run the application in development mode:
 
 ```bash
 bun run tauri dev
 ```
 
-This compiles and launches Handy in development mode with hot-reload.
-
-### 3.4 Production Build (Installers)
+Run the verification commands:
 
 ```bash
-bun run tauri build
+bun run format:check
+bun run lint
+bun run build
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-This produces:
-- **Deb package**: `src-tauri/target/release/bundle/deb/Handy_0.9.3_amd64.deb`
-- **RPM package**: `src-tauri/target/release/bundle/rpm/Handy-0.9.3-1.x86_64.rpm`
-- **AppImage**: `src-tauri/target/release/bundle/appimage/Handy_0.9.3_amd64.AppImage`
+## Build the Pop!_OS package
 
-> **No `--no-sign` needed on Linux** — the Azure code signing workaround is
-> Windows-specific. Linux builds don't have a `signCommand` configured.
-
-> **No `CARGO_TARGET_DIR` workaround needed on Linux** — the Windows
-> `MAX_PATH` 260-character limit doesn't exist on Linux.
-
----
-
-## 4. Install the .deb Package
-
-### Option A: Direct Install (Recommended for Pop!_OS)
-
-```bash
-sudo dpkg -i src-tauri/target/release/bundle/deb/Handy_0.9.3_amd64.deb
-sudo apt install -f   # resolve any missing dependencies
-```
-
-### Option B: Manual Install (from deb extraction)
-
-```bash
-cd /tmp
-ar x /path/to/Handy_0.9.3_amd64.deb data.tar.gz
-tar xzf data.tar.gz
-sudo cp usr/bin/handy /usr/bin/
-sudo cp -a usr/lib/. /usr/lib/
-sudo cp -r usr/share/icons/hicolor/* /usr/share/icons/hicolor/
-sudo cp usr/share/applications/Handy.desktop /usr/share/applications/
-sudo ldconfig
-```
-
-### After Subsequent Rebuilds
-
-Only the binary and runtime libraries need updating:
-
-```bash
-sudo cp src-tauri/target/release/handy /usr/bin/
-sudo cp -a src-tauri/transcribe-libs/. /usr/lib/
-sudo ldconfig
-```
-
----
-
-## 5. Vulkan GPU Acceleration
-
-Vulkan is **enabled by default** on this branch for Linux. The
-[Cargo.toml](src-tauri/Cargo.toml) Linux target section is:
-
-```toml
-[target.'cfg(target_os = "linux")'.dependencies]
-gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
-gtk = "0.18"
-transcribe-cpp = { version = "0.1.3", default-features = false, features = [
-  "dynamic-backends",
-  "vulkan",
-] }
-```
-
-### How It Works
-
-- At build time, the Vulkan shader generator (`vulkan-shaders-gen`) compiles
-  GLSL compute shaders to SPIR-V using `glslc` (from the `glslc` package).
-- At runtime, Handy loads `libggml-vulkan.so` alongside the CPU backends.
-- When a Vulkan-capable GPU is detected, transcription runs on the GPU.
-- If no Vulkan GPU is found, Handy transparently falls back to the best
-  available CPU backend (dynamic ISA scoring selects AVX-512, AVX2, SSE4.2,
-  etc. automatically).
-
-### Verify Vulkan Is Working
-
-After launching Handy, check the terminal output for lines like:
-
-```
-ggml_vulkan: Found 1 Vulkan device:
-ggml_vulkan: 0 = NVIDIA GeForce RTX 4070 (NVIDIA) | ...
-```
-
----
-
-## 6. Custom Feature Details (All Platforms)
-
-All features below work identically on Linux and Windows unless noted.
-
-### 6.1 Multi-Model Fallback Chain (Priority 1/2/3)
-
-**What it does**: Allows setting up to 3 post-processing AI models in priority
-order. If the primary model hits a rate limit (HTTP 429), timeout, or server
-error, Handy automatically retries with the next model in the chain.
-
-**Files involved**:
-- `src-tauri/src/actions.rs` — Fallback retry loop logic
-- `src-tauri/src/settings.rs` — Schema for pipe-delimited model storage
-- `src/components/settings/post-processing/PostProcessingSettings.tsx` — 3 priority dropdowns
-- `src/components/settings/PostProcessingSettingsApi/usePostProcessProviderState.ts` — State parsing
-
-**Storage format**: Models are stored as `model1|model2|model3` in the existing
-`post_process_models` map (pipe-delimited), maintaining backward compatibility
-with single-model configs.
-
-**UI**: The Settings → Post-Processing page shows three stacked "Priority 1/2/3"
-dropdown selectors. Priority 2 and 3 include a "None (No Fallback)" option.
-
----
-
-### 6.2 Post-Processing Reasoning Effort Control
-
-**What it does**: Adds a per-provider "reasoning effort" parameter
-(`low`/`medium`/`high`/`default`) sent in the AI API request. Setting
-`default` omits the field entirely — required for custom gateways like
-Console Go (opencode.ai) running DeepSeek that reject unknown parameters.
-
-**Files involved**:
-- `src-tauri/src/settings.rs` — `post_process_reasoning_efforts` HashMap
-- `src-tauri/src/actions.rs` — Conditional inclusion in JSON payload
-
----
-
-### 6.3 Dynamic Model Switch Global Hotkeys
-
-**What it does**: Each downloaded Whisper model can have a global keyboard
-shortcut assigned. Pressing the shortcut instantly switches the active
-transcription model in the background with an audio chime confirmation.
-
-**How to use**:
-1. Open Settings → Models
-2. Next to each downloaded model, there's an inline hotkey recorder
-3. Click the recorder and press your desired key combination
-4. The hotkey is now globally registered
-
-**Files involved**:
-- `src-tauri/src/shortcut/handler.rs` — Intercepts `model:<id>` binding events
-- `src-tauri/src/shortcut/mod.rs` — Registers dynamic `model:*` bindings
-- `src/stores/settingsStore.ts` — Dynamic binding construction
-- `src/components/onboarding/ModelCard.tsx` — Inline hotkey recorder UI
-- `src/components/settings/ShortcutInput.tsx` — `plain` prop for compact layout
-- `src/components/settings/GlobalShortcutInput.tsx` — `plain` layout support
-- `src/components/settings/HandyKeysShortcutInput.tsx` — `plain` layout support
-
-**Storage**: Hotkeys are stored in `settings.bindings` with the key format
-`model:<model_id>` (e.g., `model:ggml-large-v3-turbo-q5_0`).
-
----
-
-### 6.4 CLI Model Switching (`--load-model`)
-
-**What it does**: Switch the active Whisper model from the command line or a
-macro button without opening the UI.
-
-**Usage**:
-```bash
-# Switch to Whisper V3 Large:
-handy --load-model large
-
-# Switch to Parakeet TDT:
-handy --load-model parakeet
-
-# Switch to any model by partial name (case-insensitive):
-handy --load-model turbo
-```
-
-**How it works**: If a Handy instance is already running, the new process
-sends the `--load-model` argument to the running instance via the Tauri
-single-instance plugin IPC. The running instance scans all downloaded models,
-finds the best substring match, switches models, and plays a chime.
-
-**Macro mouse integration on Linux**: You can bind terminal commands to mouse
-buttons using your desktop environment's input settings, `xdotool`,
-`input-remapper`, or similar tools:
-
-```bash
-# Example with input-remapper or a custom script:
-handy --load-model large
-```
-
-**File**: `src-tauri/src/lib.rs` — Single-instance argument handler
-
----
-
-### 6.5 Sleep/Resume Watchdog (Time Delta)
-
-**What it does**: Detects system suspend/hibernate by measuring elapsed time
-between loop iterations. If the gap exceeds 5 seconds (indicating the OS
-suspended the process), the global hotkey hook manager is reset and all
-shortcuts are re-registered.
-
-**Works on Linux**: Yes — this is pure Rust (`std::time::Instant`) with no
-platform-specific APIs.
-
-**File**: `src-tauri/src/shortcut/handy_keys.rs`
-
----
-
-## 7. Windows-Only Features (Excluded on Linux)
-
-### 7.1 Intel OpenVINO NPU Server
-
-The embedded Python server (`backend/tools/server/run_whisper_npu_server.py`)
-that offloads transcription to an Intel NPU via OpenVINO is **Windows-only**.
-The portable Python environment and OpenVINO runtime are compiled for Windows.
-
-On Linux, use the local Whisper model with Vulkan GPU acceleration instead —
-it provides comparable or better performance on most GPUs.
-
-### 7.2 WTS Session Lock/Unlock Watchdog
-
-The Win32 `WTSQuerySessionInformationW` API call that detects screen
-lock/unlock transitions compiles out on Linux (`#[cfg(target_os = "windows")]`).
-A no-op stub is compiled in its place. This is not needed on Linux because
-Linux desktop environments don't strip global keyboard hooks on screen lock.
-
-### 7.3 NSIS / MSI Installers
-
-Windows-specific installer formats. Linux uses `.deb`, `.rpm`, or `.AppImage`
-instead.
-
----
-
-## 8. Troubleshooting
-
-### AppImage build fails on Pop!_OS
-
-If the AppImage bundler fails (common on Ubuntu 24.04+), build only the deb:
+Build only the Debian bundle:
 
 ```bash
 bun run tauri build -- --bundles deb
 ```
 
-### Vulkan shaders fail to compile
+The package is written under:
 
-Ensure `glslc` is installed and on PATH:
+```text
+src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
+```
+
+Linux does not need the Windows `--no-sign` or short
+`CARGO_TARGET_DIR` workarounds.
+
+## Install or inspect the package
+
+Install the bundle with APT so dependencies are resolved:
 
 ```bash
-which glslc
-# If missing:
+sudo apt install ./src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
+```
+
+To inspect it without installing:
+
+```bash
+inspection_dir="$(mktemp -d)"
+dpkg-deb -x src-tauri/target/release/bundle/deb/Handy_*_amd64.deb \
+  "$inspection_dir"
+find "$inspection_dir" -maxdepth 4 -type f -print
+```
+
+For a manual refresh after a source rebuild, keep libraries in the
+application-private directory:
+
+```bash
+sudo install -Dm755 src-tauri/target/release/handy /usr/bin/handy
+sudo install -d /usr/lib/Handy
+sudo cp -a src-tauri/transcribe-libs/. /usr/lib/Handy/
+```
+
+Installing the generated `.deb` is preferred because it also places icons,
+desktop metadata, resources, and runtime libraries correctly.
+
+## Vulkan acceleration
+
+The Linux target enables `transcribe-cpp` dynamic backends and Vulkan.
+`glslc` compiles the compute shaders during the build. At runtime Handy tries
+the available Vulkan backend and retains CPU backends as a fallback.
+
+Check startup logs for a `ggml_vulkan` device entry. If none appears, confirm
+that `vulkaninfo --summary` lists a physical GPU before debugging Handy.
+
+## Shortcuts, suspend, and Wayland
+
+The shortcut manager detects elapsed gaps longer than five seconds and
+re-registers its hooks. This is useful after suspend/resume and severe
+scheduling delays on both Linux and Windows.
+
+Pop!_OS may run a Wayland session. Wayland deliberately limits global input
+capture, so shortcut behavior depends on the compositor and the selected
+keyboard implementation. The watchdog improves recovery but does not override
+those security boundaries. If a shortcut still fails after resume:
+
+1. Restart Handy.
+2. Try an X11 session to distinguish a Wayland policy limitation.
+3. Confirm `wtype` is installed for Wayland text injection.
+4. Review the terminal log for the watchdog reset message.
+
+The GTK layer-shell overlay can be disabled when a compositor does not support
+it:
+
+```bash
+HANDY_NO_GTK_LAYER_SHELL=1 handy
+```
+
+## Troubleshooting
+
+Build only the Debian package if AppImage bundling fails on Ubuntu 24.04 or
+newer:
+
+```bash
+bun run tauri build -- --bundles deb
+```
+
+If Vulkan shader generation fails:
+
+```bash
+command -v glslc
 sudo apt install glslc
 ```
 
-### `libgtk-layer-shell` not found
+If GTK layer shell or WebKitGTK is missing:
 
 ```bash
-sudo apt install libgtk-layer-shell0 libgtk-layer-shell-dev
+sudo apt install \
+  libgtk-layer-shell0 \
+  libgtk-layer-shell-dev \
+  libwebkit2gtk-4.1-dev
 ```
 
-### WebKit2GTK not found
-
-Pop!_OS 22.04+ uses webkit2gtk-4.1:
+If the built application reports a missing shared library, inspect it before
+copying anything:
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev
+LD_LIBRARY_PATH=src-tauri/transcribe-libs ldd src-tauri/target/release/handy
 ```
 
-### No Vulkan GPU detected at runtime
-
-```bash
-# Check Vulkan support:
-vulkaninfo --summary
-
-# For NVIDIA: ensure driver is installed
-nvidia-smi
-
-# For AMD: ensure Mesa RADV is installed
-sudo apt install mesa-vulkan-drivers
-```
-
-### Hotkeys not working after resume from suspend
-
-The sleep watchdog should handle this automatically. If hotkeys still don't
-work after resume, restart Handy. Check terminal output for:
-
-```
-[watchdog] sleep detected (Δ=...s), resetting hook manager
-```
-
----
-
-## Quick Reference — Complete Build from Scratch
-
-```bash
-# 1. Install system dependencies
-sudo apt update
-sudo apt install -y build-essential pkg-config cmake libssl-dev libasound2-dev \
-  libvulkan-dev vulkan-tools glslc spirv-headers glslang-tools \
-  libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-  librsvg2-dev libgtk-layer-shell0 libgtk-layer-shell-dev patchelf
-
-# 2. Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-# 3. Install Bun
-curl -fsSL https://bun.sh/install | bash
-source ~/.bashrc
-
-# 4. Clone and build
-git clone <repo-url> Handy-npu && cd Handy-npu
-git checkout codex/whisper-npu-v0.9.0
-bun install
-bun run tauri build
-
-# 5. Install
-sudo dpkg -i src-tauri/target/release/bundle/deb/Handy_0.9.3_amd64.deb
-sudo apt install -f
-```
+Runtime libraries generated for Handy should be packaged under
+`/usr/lib/Handy/`, not added broadly to `/usr/lib`.

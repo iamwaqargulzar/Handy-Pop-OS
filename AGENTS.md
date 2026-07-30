@@ -59,9 +59,8 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
 - `managers/` - Core business logic:
   - `audio.rs` - Audio recording and device management
   - `model.rs` - Model downloading and management
-  - `transcription.rs` - Speech-to-text processing pipeline (with remote NPU backend bypass)
+  - `transcription.rs` - Local speech-to-text processing pipeline
   - `history.rs` - Transcription history storage
-  - `remote_whisper_server.rs` - Intel OpenVINO NPU Whisper server manager
 - `audio_toolkit/` - Low-level audio processing:
   - `audio/` - Device enumeration, recording, resampling
   - `vad/` - Voice Activity Detection (Silero VAD)
@@ -72,7 +71,7 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
   - `handler.rs` - Shortcut event dispatch (includes model-switch hotkey interception)
   - `handy_keys.rs` - Low-level hook manager with sleep/lock watchdog threads
 - `actions.rs` - Post-processing pipeline with multi-model fallback chain
-- `settings.rs` - Application settings management (includes NPU, reasoning effort, priority models)
+- `settings.rs` - Application settings management (includes theme, reasoning effort, priority models)
 - `overlay.rs` - Recording overlay window (platform-specific)
 - `signal_handle.rs` - `send_transcription_input()` reusable function
 - `utils.rs` - Platform detection helpers
@@ -223,22 +222,15 @@ $env:CARGO_TARGET_DIR="C:\t"; bun run tauri build --no-sign
 
 See [BUILD.md](BUILD.md) for detailed platform-specific instructions.
 
-## Custom Fork Features (Handy-NPU)
+## Custom Fork Features
 
 This fork adds the following features on top of the upstream Handy codebase:
 
-### Intel OpenVINO NPU Backend
-A remote Whisper backend that runs on Intel NPU via OpenVINO GenAI. Configured via Settings → Remote Whisper Backend.
-- Backend: `managers/remote_whisper_server.rs`, Python server in `backend/`
-- Frontend: `components/settings/RemoteWhisperBackendSettings.tsx`
-
-### Vulkan GPU Acceleration (Windows)
-The `vulkan` feature flag is enabled for `transcribe-cpp` on `x86_64-pc-windows-msvc`, adding GPU-accelerated inference via `ggml-vulkan.dll`.
+### Dark Neutral Theme
+New installations start with a charcoal theme, off-white text, and a cool blue accent. The existing theme selector remains available.
 
 ### Sleep/Resume & Session Lock Watchdogs
-In `shortcut/handy_keys.rs`, two watchdog mechanisms detect when Windows silently strips low-level keyboard hooks:
-1. **Sleep watchdog**: Detects >5s time gaps indicating system suspend/hibernation.
-2. **WTS session lock watchdog**: Polls `WTSQuerySessionInformationW` every 1s to detect lock/unlock transitions. Uses byte offset **16** (not 12) for `SessionFlags` due to MSVC 64-bit struct padding alignment.
+In `shortcut/handy_keys.rs`, the elapsed-time watchdog detects gaps longer than five seconds and re-registers shortcuts after suspend/resume on all platforms. Windows additionally polls the WTS session state to recover after lock/unlock. Linux recovery is best-effort and does not bypass Wayland compositor restrictions.
 
 ### Post-Processing Multi-Model Fallback Chain
 Three priority model selectors (Priority 1, 2, 3) stored as pipe-delimited strings in `post_process_models`. On API error or rate-limit, the system automatically retries with the next model.
@@ -251,7 +243,7 @@ Users can assign global keyboard hotkeys to any downloaded model directly from t
 - Frontend: `ModelCard.tsx` (inline hotkey recorder), `ShortcutInput.tsx` (`plain` prop for inline layout)
 
 ### CLI Model Switching (`--load-model`)
-Switch the active model from the command line: `handy.exe --load-model large`. Useful for Logitech G HUB macro integration.
+Switch the active model from the command line: `handy --load-model large` (or `handy.exe --load-model large` on Windows). Useful for desktop shortcuts and macro integration.
 
 ## Troubleshooting
 
