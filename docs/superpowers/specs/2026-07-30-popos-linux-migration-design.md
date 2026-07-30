@@ -13,7 +13,7 @@ features already present in the repository.
 - Post-processing reasoning-effort selection.
 - Dynamic model-switch global shortcuts.
 - CLI model switching through `--load-model`.
-- Sleep/resume shortcut recovery where supported on Linux.
+- Best-effort sleep/resume shortcut recovery on Linux.
 - Linux overlay, packaging, and runtime-library handling.
 
 The removed Intel OpenVINO NPU backend is intentionally out of scope because it
@@ -36,10 +36,35 @@ was Windows-only and is no longer required.
   which places managed headers and libraries in the distribution's standard
   system locations.
 - Keep Rust under the current user's rustup-managed directory.
-- Keep Bun in its standard user-managed location.
+- Install Bun once in its standard user-managed location.
 - Install frontend packages into the project's `node_modules` directory.
 - Keep Cargo build output in `src-tauri/target`; do not use the Windows
   short-path target-directory workaround.
+
+The system packages are shared by all projects. Bun and Cargo retain shared
+download caches, while each project keeps its own resolved dependency tree and
+build output so incompatible project versions do not conflict.
+
+## Linux shortcut recovery
+
+- Compile the Windows WTS lock/unlock watcher only on Windows.
+- Retain the platform-neutral elapsed-time recovery on Linux. It recreates the
+  shortcut manager after a long scheduler gap such as suspend/resume.
+- Describe this as best-effort recovery. It does not bypass Wayland's
+  restrictions on application-owned global shortcuts.
+- Update Windows-specific comments around the elapsed-time check so the source
+  accurately describes its Linux behavior.
+
+## Visual theme
+
+- Preserve the current layout and component structure.
+- Make the application dark themed by default.
+- Replace the pink/orange emphasis with a restrained charcoal palette, neutral
+  dark surfaces, readable off-white text, and a subtle cool accent.
+- Apply the palette through the shared theme tokens so the main window,
+  controls, icons, and recording overlay remain visually consistent.
+- Preserve accessible contrast and visible focus, hover, warning, and error
+  states.
 
 ## Documentation
 
@@ -49,7 +74,8 @@ Update `LINUX.md` and related Linux build instructions to:
 - remove Windows NPU guidance;
 - use wildcard package filenames where practical;
 - install app-private runtime libraries under `/usr/lib/Handy`;
-- document Pop!_OS dependencies and Wayland limitations accurately.
+- document Pop!_OS dependencies, shared installation locations, shortcut
+  recovery, and Wayland limitations accurately.
 
 ## Verification
 
@@ -57,8 +83,9 @@ Update `LINUX.md` and related Linux build instructions to:
 2. Confirm Linux build configuration still enables Vulkan and dynamic backends.
 3. Install frontend dependencies.
 4. Run formatting checks, frontend lint/type checks, and Rust checks.
-5. Build a Linux `.deb` bundle.
-6. Inspect the bundle for the executable, resources, and app-private runtime
+5. Verify the main window and recording overlay use the shared dark palette.
+6. Build a Linux `.deb` bundle.
+7. Inspect the bundle for the executable, resources, and app-private runtime
    libraries.
 
 The application will not be installed system-wide unless the build succeeds.
