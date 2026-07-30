@@ -181,15 +181,15 @@ Handy supports command-line parameters on all platforms for integration with scr
 
 **Implementation:** `cli.rs` (definitions), `main.rs` (parsing), `lib.rs` (applying), `signal_handle.rs` (shared logic)
 
-| Flag                         | Description                                                     |
-| ---------------------------- | --------------------------------------------------------------- |
-| `--toggle-transcription`     | Toggle recording on/off on a running instance                   |
-| `--toggle-post-process`      | Toggle recording with post-processing on/off                    |
-| `--cancel`                   | Cancel the current operation on a running instance              |
-| `--start-hidden`             | Launch without showing the main window (tray icon visible)      |
-| `--no-tray`                  | Launch without system tray (closing window quits the app)       |
-| `--debug`                    | Enable debug mode with verbose (Trace) logging                  |
-| `--load-model <QUERY>`       | Switch the active model on a running instance (substring match) |
+| Flag                     | Description                                                     |
+| ------------------------ | --------------------------------------------------------------- |
+| `--toggle-transcription` | Toggle recording on/off on a running instance                   |
+| `--toggle-post-process`  | Toggle recording with post-processing on/off                    |
+| `--cancel`               | Cancel the current operation on a running instance              |
+| `--start-hidden`         | Launch without showing the main window (tray icon visible)      |
+| `--no-tray`              | Launch without system tray (closing window quits the app)       |
+| `--debug`                | Enable debug mode with verbose (Trace) logging                  |
+| `--load-model <QUERY>`   | Switch the active model on a running instance (substring match) |
 
 **Key design decisions:**
 
@@ -227,22 +227,29 @@ See [BUILD.md](BUILD.md) for detailed platform-specific instructions.
 This fork adds the following features on top of the upstream Handy codebase:
 
 ### Dark Neutral Theme
+
 New installations start with a charcoal theme, off-white text, and a cool blue accent. The existing theme selector remains available.
 
 ### Sleep/Resume & Session Lock Watchdogs
+
 In `shortcut/handy_keys.rs`, the elapsed-time watchdog detects gaps longer than five seconds and re-registers shortcuts after suspend/resume on all platforms. Windows additionally polls the WTS session state to recover after lock/unlock. Linux recovery is best-effort and does not bypass Wayland compositor restrictions.
 
 ### Post-Processing Multi-Model Fallback Chain
+
 Three priority model selectors (Priority 1, 2, 3) stored as pipe-delimited strings in `post_process_models`. On API error or rate-limit, the system automatically retries with the next model.
+
 - Backend: `actions.rs` (fallback loop), `settings.rs` (schema)
 - Frontend: `PostProcessingSettings.tsx` (3 dropdown selectors), `usePostProcessProviderState.ts` (pipe parsing)
 
 ### Dynamic Model Switch Global Hotkeys
+
 Users can assign global keyboard hotkeys to any downloaded model directly from the Models page. Stored in `settings.bindings` as `model:<model_id>`.
+
 - Backend: `shortcut/mod.rs` (registration), `shortcut/handler.rs` (event dispatch)
 - Frontend: `ModelCard.tsx` (inline hotkey recorder), `ShortcutInput.tsx` (`plain` prop for inline layout)
 
 ### CLI Model Switching (`--load-model`)
+
 Switch the active model from the command line: `handy --load-model large` (or `handy.exe --load-model large` on Windows). Useful for desktop shortcuts and macro integration.
 
 ## Troubleshooting

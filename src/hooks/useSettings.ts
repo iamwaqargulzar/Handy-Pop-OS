@@ -40,7 +40,10 @@ interface UseSettingsReturn {
     apiKey: string,
   ) => Promise<void>;
   updatePostProcessModel: (providerId: string, model: string) => Promise<void>;
-  updatePostProcessReasoningEffort: (providerId: string, reasoningEffort: string) => Promise<void>;
+  updatePostProcessReasoningEffort: (
+    providerId: string,
+    reasoningEffort: string,
+  ) => Promise<void>;
   fetchPostProcessModels: (providerId: string) => Promise<string[]>;
 }
 

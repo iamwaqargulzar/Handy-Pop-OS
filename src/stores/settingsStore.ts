@@ -51,7 +51,10 @@ interface SettingsStore {
     apiKey: string,
   ) => Promise<void>;
   updatePostProcessModel: (providerId: string, model: string) => Promise<void>;
-  updatePostProcessReasoningEffort: (providerId: string, reasoningEffort: string) => Promise<void>;
+  updatePostProcessReasoningEffort: (
+    providerId: string,
+    reasoningEffort: string,
+  ) => Promise<void>;
   fetchPostProcessModels: (providerId: string) => Promise<string[]>;
   setPostProcessModelOptions: (providerId: string, models: string[]) => void;
 
@@ -338,7 +341,7 @@ export const useSettingsStore = create<SettingsStore>()(
                 ...state.settings,
                 bindings: {
                   ...state.settings.bindings,
-                   [id]: {
+                  [id]: {
                     id,
                     name: "Model Switch",
                     description: `Switch to model ${id.replace("model:", "")}`,
@@ -471,7 +474,10 @@ export const useSettingsStore = create<SettingsStore>()(
         } else if (settingType === "model") {
           await commands.changePostProcessModelSetting(providerId, value);
         } else if (settingType === "reasoning_effort") {
-          await commands.changePostProcessReasoningEffortSetting(providerId, value);
+          await commands.changePostProcessReasoningEffortSetting(
+            providerId,
+            value,
+          );
         }
         await refreshSettings();
       } catch (error) {
@@ -546,7 +552,11 @@ export const useSettingsStore = create<SettingsStore>()(
     },
 
     updatePostProcessReasoningEffort: async (providerId, reasoningEffort) => {
-      return get().updatePostProcessSetting("reasoning_effort", providerId, reasoningEffort);
+      return get().updatePostProcessSetting(
+        "reasoning_effort",
+        providerId,
+        reasoningEffort,
+      );
     },
 
     fetchPostProcessModels: async (providerId) => {

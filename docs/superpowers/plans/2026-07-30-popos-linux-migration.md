@@ -1,16 +1,16 @@
-# Pop!_OS Linux Migration Implementation Plan
+# Pop!\_OS Linux Migration Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Produce a clean, dark-themed Pop!_OS build of Handy that preserves the Linux-compatible custom transcription, post-processing, shortcut, and CLI behavior.
+**Goal:** Produce a clean, dark-themed Pop!\_OS build of Handy that preserves the Linux-compatible custom transcription, post-processing, shortcut, and CLI behavior.
 
-**Architecture:** Retain the existing Tauri/React application, its platform-gated shared code, and tracked Windows packaging configuration. Clean only generated Windows state, install reusable native dependencies through Pop!_OS, isolate the Windows WTS watcher while retaining platform-neutral suspend recovery, and drive the visual update through shared CSS tokens.
+**Architecture:** Retain the existing Tauri/React application, its platform-gated shared code, and tracked Windows packaging configuration. Clean only generated Windows state, install reusable native dependencies through Pop!\_OS, isolate the Windows WTS watcher while retaining platform-neutral suspend recovery, and drive the visual update through shared CSS tokens.
 
-**Tech Stack:** Pop!_OS 24.04, apt, Rust stable, Bun, Tauri 2, React/TypeScript, Tailwind CSS, GTK/WebKitGTK, Vulkan, Bun tests, Cargo tests.
+**Tech Stack:** Pop!\_OS 24.04, apt, Rust stable, Bun, Tauri 2, React/TypeScript, Tailwind CSS, GTK/WebKitGTK, Vulkan, Bun tests, Cargo tests.
 
 ## Global Constraints
 
-- Work only inside `/home/waqar/Documents/projects/mine/Handy`, except for installing explicitly required Pop!_OS packages and per-user Rust/Bun tooling.
+- Work only inside `/home/waqar/Documents/projects/mine/Handy`, except for installing explicitly required Pop!\_OS packages and per-user Rust/Bun tooling.
 - Preserve all Linux-compatible custom application features.
 - Do not restore the Windows-only Intel OpenVINO NPU backend.
 - Install reusable native dependencies through `apt`; keep Bun and Rust user-managed.
@@ -24,12 +24,14 @@
 ### Task 1: Clean the Windows-origin workspace
 
 **Files:**
+
 - Delete generated: `node_modules/`
 - Delete generated: `dist/`
 - Delete generated: `src-tauri/target/`
 - Delete generated: `src-tauri/transcribe-libs/`
 
 **Interfaces:**
+
 - Consumes: the committed custom Handy source and design specification.
 - Produces: an LF-normalized Linux working tree with no Windows binaries or installer assets.
 
@@ -94,13 +96,15 @@ git diff --exit-code -- src-tauri/tauri.conf.json \
 
 Expected: exit code `0`; generated cleanup requires no source commit.
 
-### Task 2: Install reusable Pop!_OS build dependencies
+### Task 2: Install reusable Pop!\_OS build dependencies
 
 **Files:**
+
 - Verify: `src-tauri/resources/models/silero_vad_v4.onnx`
 
 **Interfaces:**
-- Consumes: Pop!_OS 24.04 package repositories and Bun's standard user installer.
+
+- Consumes: Pop!\_OS 24.04 package repositories and Bun's standard user installer.
 - Produces: globally shared native build dependencies plus one per-user Bun installation.
 
 - [ ] **Step 1: Install distribution-managed native dependencies**
@@ -168,10 +172,12 @@ Expected: dependencies resolve into project-local `node_modules`, with downloads
 ### Task 3: Make shortcut recovery accurately platform-aware
 
 **Files:**
+
 - Modify: `src-tauri/src/shortcut/handy_keys.rs`
 - Test: `src-tauri/src/shortcut/handy_keys.rs`
 
 **Interfaces:**
+
 - Consumes: `std::time::Duration` between shortcut-manager loop iterations.
 - Produces: `should_recover_after_gap(elapsed: Duration) -> bool` and Windows-only WTS polling.
 
@@ -236,6 +242,7 @@ git commit -m "fix: scope shortcut recovery to platform behavior"
 ### Task 4: Replace the warm palette with a dark neutral theme
 
 **Files:**
+
 - Create: `tests/theme-tokens.test.ts`
 - Modify: `src/styles/theme.css`
 - Modify: `src/App.css`
@@ -250,6 +257,7 @@ git commit -m "fix: scope shortcut recovery to platform behavior"
 - Modify: `src/components/model-selector/ModelStatusButton.tsx`
 
 **Interfaces:**
+
 - Consumes: shared CSS custom properties and persisted `Theme`.
 - Produces: a dark default palette shared by the main window, controls, icons, and overlay.
 
@@ -327,12 +335,14 @@ git commit -m "feat: adopt a dark neutral interface"
 ### Task 5: Correct and consolidate Linux documentation
 
 **Files:**
+
 - Modify: `LINUX.md`
 - Modify: `BUILD.md`
 - Modify: `AGENTS.md`
 
 **Interfaces:**
-- Consumes: the verified Pop!_OS dependency list and current version `0.9.4`.
+
+- Consumes: the verified Pop!\_OS dependency list and current version `0.9.4`.
 - Produces: accurate Linux build, packaging, runtime, Wayland, and shortcut-recovery instructions.
 
 - [ ] **Step 1: Update stale version and package paths**
@@ -365,14 +375,16 @@ git add LINUX.md BUILD.md AGENTS.md
 git commit -m "docs: align Linux setup with Pop!_OS build"
 ```
 
-### Task 6: Build and audit the Pop!_OS package
+### Task 6: Build and audit the Pop!\_OS package
 
 **Files:**
+
 - Generate: `src-tauri/target/release/bundle/deb/*.deb`
 
 **Interfaces:**
+
 - Consumes: cleaned source, installed native dependencies, project dependencies, VAD resource, and Linux packaging configuration.
-- Produces: an audited Pop!_OS-compatible `.deb` bundle.
+- Produces: an audited Pop!\_OS-compatible `.deb` bundle.
 
 - [ ] **Step 1: Run formatting and static checks**
 

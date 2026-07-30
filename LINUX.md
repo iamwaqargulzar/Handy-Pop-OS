@@ -1,6 +1,6 @@
-# Handy — Pop!_OS Build and Deployment Guide
+# Handy — Pop!\_OS Build and Deployment Guide
 
-This guide covers the current Handy `0.9.4` source tree on Pop!_OS 24.04 and
+This guide covers the current Handy `0.9.4` source tree on Pop!\_OS 24.04 and
 other Ubuntu/Debian-based distributions. The retired Windows-only Intel NPU
 experiment is not part of this Linux build.
 
@@ -90,7 +90,7 @@ Verify Vulkan:
 vulkaninfo --summary
 ```
 
-Pop!_OS normally provides the appropriate Mesa or NVIDIA runtime through its
+Pop!\_OS normally provides the appropriate Mesa or NVIDIA runtime through its
 normal driver tooling. Prefer the distribution's current recommended driver;
 do not pin an old driver version from this guide.
 
@@ -122,7 +122,7 @@ bun run build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-## Build the Pop!_OS package
+## Build the Pop!\_OS package
 
 Build only the Debian bundle:
 
@@ -183,7 +183,7 @@ The shortcut manager detects elapsed gaps longer than five seconds and
 re-registers its hooks. This is useful after suspend/resume and severe
 scheduling delays on both Linux and Windows.
 
-Pop!_OS may run a Wayland session. Wayland deliberately limits global input
+Pop!\_OS may run a Wayland session. Wayland deliberately limits global input
 capture, so shortcut behavior depends on the compositor and the selected
 keyboard implementation. The watchdog improves recovery but does not override
 those security boundaries. If a shortcut still fails after resume:

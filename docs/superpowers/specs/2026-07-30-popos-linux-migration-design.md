@@ -1,8 +1,8 @@
-# Pop!_OS Linux Migration Design
+# Pop!\_OS Linux Migration Design
 
 ## Goal
 
-Convert the existing Windows-origin Handy working copy into a clean Pop!_OS
+Convert the existing Windows-origin Handy working copy into a clean Pop!\_OS
 development and build workspace while preserving the Linux-compatible custom
 features already present in the repository.
 
@@ -29,11 +29,11 @@ was Windows-only and is no longer required.
 - Retain platform-gated shared source where removing it could destabilize the
   application; the Rust compiler excludes those sections from Linux builds.
 - Do not read, modify, or delete anything outside the Handy project except for
-  installing explicitly required Pop!_OS system packages.
+  installing explicitly required Pop!\_OS system packages.
 
 ## Dependency locations
 
-- Install native compiler and development packages with Pop!_OS/Ubuntu `apt`,
+- Install native compiler and development packages with Pop!\_OS/Ubuntu `apt`,
   which places managed headers and libraries in the distribution's standard
   system locations.
 - Keep Rust under the current user's rustup-managed directory.
@@ -75,7 +75,7 @@ Update `LINUX.md` and related Linux build instructions to:
 - remove Windows NPU guidance;
 - use wildcard package filenames where practical;
 - install app-private runtime libraries under `/usr/lib/Handy`;
-- document Pop!_OS dependencies, shared installation locations, shortcut
+- document Pop!\_OS dependencies, shared installation locations, shortcut
   recovery, and Wayland limitations accurately.
 
 ## Verification

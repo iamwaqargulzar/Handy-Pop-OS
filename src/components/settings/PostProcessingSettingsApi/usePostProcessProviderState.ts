@@ -73,7 +73,8 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   const baseUrl = selectedProvider?.base_url ?? "";
   const apiKey = settings?.post_process_api_keys?.[selectedProviderId] ?? "";
   const model = settings?.post_process_models?.[selectedProviderId] ?? "";
-  const reasoningEffort = settings?.post_process_reasoning_efforts?.[selectedProviderId] ?? "default";
+  const reasoningEffort =
+    settings?.post_process_reasoning_efforts?.[selectedProviderId] ?? "default";
 
   const providerOptions = useMemo<DropdownOption[]>(() => {
     return providers.map((provider) => ({
@@ -170,12 +171,8 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   );
 
   const modelParts = useMemo(() => {
-    const parts = model.split('|');
-    return [
-      parts[0] || "",
-      parts[1] || "",
-      parts[2] || ""
-    ];
+    const parts = model.split("|");
+    return [parts[0] || "", parts[1] || "", parts[2] || ""];
   }, [model]);
 
   const modelPriority1 = modelParts[0];
@@ -186,12 +183,12 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
     (priorityIndex: number, value: string) => {
       const parts = [...modelParts];
       parts[priorityIndex] = value.trim();
-      
+
       let endIdx = parts.length;
       while (endIdx > 1 && !parts[endIdx - 1]) {
         endIdx--;
       }
-      const newModelValue = parts.slice(0, endIdx).join('|');
+      const newModelValue = parts.slice(0, endIdx).join("|");
       void updatePostProcessModel(selectedProviderId, newModelValue);
     },
     [modelParts, selectedProviderId, updatePostProcessModel],
