@@ -4,7 +4,7 @@
 
 **Goal:** Produce a clean, dark-themed Pop!_OS build of Handy that preserves the Linux-compatible custom transcription, post-processing, shortcut, and CLI behavior.
 
-**Architecture:** Retain the existing Tauri/React application and its platform-gated shared code. Clean only generated Windows state and Windows installer assets, install reusable native dependencies through Pop!_OS, isolate the Windows WTS watcher while retaining platform-neutral suspend recovery, and drive the visual update through shared CSS tokens.
+**Architecture:** Retain the existing Tauri/React application, its platform-gated shared code, and tracked Windows packaging configuration. Clean only generated Windows state, install reusable native dependencies through Pop!_OS, isolate the Windows WTS watcher while retaining platform-neutral suspend recovery, and drive the visual update through shared CSS tokens.
 
 **Tech Stack:** Pop!_OS 24.04, apt, Rust stable, Bun, Tauri 2, React/TypeScript, Tailwind CSS, GTK/WebKitGTK, Vulkan, Bun tests, Cargo tests.
 
@@ -24,8 +24,6 @@
 ### Task 1: Clean the Windows-origin workspace
 
 **Files:**
-- Delete: `src-tauri/tauri.windows.conf.json`
-- Delete: `src-tauri/nsis/installer.nsi`
 - Delete generated: `node_modules/`
 - Delete generated: `dist/`
 - Delete generated: `src-tauri/target/`
@@ -68,27 +66,33 @@ After confirming each exact path is inside the repository, remove:
 
 Expected: no `.dll`, `.exe`, `.msi`, Windows-generated frontend output, or stale Cargo output remains.
 
-- [ ] **Step 4: Remove Windows-only packaging files**
+- [ ] **Step 4: Preserve tracked platform configuration**
 
-Delete `src-tauri/tauri.windows.conf.json` and `src-tauri/nsis/installer.nsi`. Remove the `bundle.windows` object from `src-tauri/tauri.conf.json`, leaving the Linux packaging object unchanged.
+Confirm `src-tauri/tauri.windows.conf.json`, `src-tauri/nsis/installer.nsi`,
+and the `bundle.windows` object in `src-tauri/tauri.conf.json` remain tracked.
+Rust and Tauri will ignore these Windows-only paths during the Linux build.
 
 - [ ] **Step 5: Verify cleanup**
 
 Run:
 
 ```bash
-find . -path './.git' -prune -o -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.msi' -o -iname '*.nsi' \) -print
+find node_modules dist src-tauri/target src-tauri/transcribe-libs \
+  -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.msi' \) \
+  -print 2>/dev/null
 git diff --check
 ```
 
-Expected: the artifact search returns no files and `git diff --check` passes.
+Expected: the generated-artifact search returns no files and `git diff --check` passes.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Confirm tracked Windows files remain unchanged**
 
 ```bash
-git add src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json src-tauri/nsis/installer.nsi
-git commit -m "chore: remove obsolete Windows packaging"
+git diff --exit-code -- src-tauri/tauri.conf.json \
+  src-tauri/tauri.windows.conf.json src-tauri/nsis/installer.nsi
 ```
+
+Expected: exit code `0`; generated cleanup requires no source commit.
 
 ### Task 2: Install reusable Pop!_OS build dependencies
 

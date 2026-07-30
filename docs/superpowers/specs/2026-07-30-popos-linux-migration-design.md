@@ -23,7 +23,8 @@ was Windows-only and is no longer required.
 
 - Remove generated Windows DLLs and stale build output.
 - Remove and reinstall project dependencies created by the Windows environment.
-- Remove Windows-only installer configuration and NSIS assets.
+- Preserve tracked Windows source, installer configuration, and NSIS assets;
+  platform selection excludes them from Linux builds.
 - Normalize Windows CRLF line endings to Linux LF without changing file content.
 - Retain platform-gated shared source where removing it could destabilize the
   application; the Rust compiler excludes those sections from Linux builds.
