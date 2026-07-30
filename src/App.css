@@ -54,7 +54,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Just a bit darker than the (already dark) background, keeping its warm tint */
+    /* A slightly deeper neutral surface for the live log console. */
     --color-log-surface: color-mix(in srgb, var(--color-background), black 15%);
   }
 }

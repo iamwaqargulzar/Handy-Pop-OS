@@ -267,9 +267,11 @@ const ModelCard: React.FC<ModelCardProps> = ({
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
             className="flex items-center gap-1 text-xs text-text/50 border border-mid-gray/30 rounded-md px-1.5 py-0.5 bg-mid-gray/5 hover:bg-mid-gray/10 hover:border-logo-primary/30 transition-all ml-1.5 h-6"
-            title="Assign a global hotkey to instantly switch to this model"
+            title={t("modelSelector.modelHotkeyDescription")}
           >
-            <span className="font-medium text-text/40 mr-0.5">Hotkey:</span>
+            <span className="font-medium text-text/40 mr-0.5">
+              {t("modelSelector.modelHotkey")}
+            </span>
             <ShortcutInput shortcutId={`model:${model.id}`} plain={true} />
           </div>
         )}

@@ -34,9 +34,9 @@ const ModelStatusButton: React.FC<ModelStatusButtonProps> = ({
       case "downloading":
         return "bg-logo-primary animate-pulse";
       case "verifying":
-        return "bg-orange-400 animate-pulse";
+        return "bg-logo-primary animate-pulse";
       case "extracting":
-        return "bg-orange-400 animate-pulse";
+        return "bg-logo-primary animate-pulse";
       case "error":
         return "bg-red-400";
       case "unloaded":

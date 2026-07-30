@@ -574,7 +574,7 @@ fn default_sound_theme() -> SoundTheme {
 }
 
 fn default_theme() -> Theme {
-    Theme::System
+    Theme::Dark
 }
 
 fn default_post_process_enabled() -> bool {
@@ -715,10 +715,7 @@ fn default_post_process_models() -> HashMap<String, String> {
 fn default_post_process_reasoning_efforts() -> HashMap<String, String> {
     let mut map = HashMap::new();
     for provider in default_post_process_providers() {
-        map.insert(
-            provider.id.clone(),
-            "default".to_string(),
-        );
+        map.insert(provider.id.clone(), "default".to_string());
     }
     map
 }
@@ -791,7 +788,10 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
             }
         }
 
-        match settings.post_process_reasoning_efforts.get_mut(&provider.id) {
+        match settings
+            .post_process_reasoning_efforts
+            .get_mut(&provider.id)
+        {
             Some(_) => {}
             None => {
                 settings
@@ -1381,6 +1381,11 @@ mod tests {
             settings.settings_schema_version,
             CURRENT_SETTINGS_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn default_settings_start_with_dark_theme() {
+        assert_eq!(get_default_settings().theme, Theme::Dark);
     }
 
     #[cfg(not(target_os = "linux"))]

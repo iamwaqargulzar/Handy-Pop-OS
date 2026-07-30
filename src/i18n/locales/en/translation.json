@@ -124,6 +124,8 @@
     "legacy": "Legacy",
     "streaming": "Streaming",
     "active": "Active",
+    "modelHotkey": "Hotkey:",
+    "modelHotkeyDescription": "Assign a global hotkey to instantly switch to this model",
     "switching": "Switching...",
     "noModelsAvailable": "No models available",
     "verifying": "Verifying {{modelName}}...",
@@ -393,12 +395,16 @@
           "placeholder": "sk-..."
         },
         "model": {
-          "title": "Model",
+          "title": "Post-Processing Models (Priority Chain)",
           "descriptionCustom": "Provide the model identifier expected by your custom endpoint.",
           "descriptionDefault": "Choose a model exposed by the selected provider.",
           "placeholderWithOptions": "Search or select a model",
           "placeholderNoOptions": "Type a model name",
-          "refreshModels": "Refresh models"
+          "refreshModels": "Refresh models",
+          "priorityPrimary": "Priority 1 (Primary Model)",
+          "prioritySecondary": "Priority 2 (Secondary Fallback)",
+          "priorityTertiary": "Priority 3 (Tertiary Fallback)",
+          "noFallback": "None (No Fallback)"
         },
         "reasoningEffort": {
           "title": "Reasoning Effort",
