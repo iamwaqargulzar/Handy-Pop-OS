@@ -25,6 +25,8 @@
   --color-background: var(--dark-color-background);
   --color-logo-primary: var(--dark-color-logo-primary);
   --color-logo-stroke: var(--dark-color-logo-stroke);
+  --color-warning: var(--dark-color-warning);
+  --color-error: var(--dark-color-error);
 }
 
 @media (prefers-color-scheme: dark) {

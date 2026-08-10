@@ -40,6 +40,8 @@ impl Drop for FinishGuard {
         if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
             c.notify_processing_finished();
         }
+        // Return large transient transcription buffers to the OS on Linux.
+        crate::memory::trim_freed_memory();
     }
 }
 
@@ -60,6 +62,16 @@ const TRANSCRIPTION_FIELD: &str = "transcription";
 /// Strip invisible Unicode characters that some LLMs may insert
 fn strip_invisible_chars(s: &str) -> String {
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
+}
+
+/// Strip a leading `<think>...</think>` block emitted by reasoning models.
+fn strip_think_block(s: &str) -> &str {
+    if let Some(rest) = s.trim_start().strip_prefix("<think>") {
+        if let Some(end) = rest.find("</think>") {
+            return rest[end + "</think>".len()..].trim_start();
+        }
+    }
+    s
 }
 
 /// Build a system prompt from the user's prompt template.
@@ -174,28 +186,16 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         .cloned()
         .unwrap_or_default();
 
-    // Determine reasoning settings for this provider
-    let (reasoning_effort, reasoning) = match provider.id.as_str() {
-        "openrouter" => (
-            None,
-            Some(crate::llm_client::ReasoningConfig {
-                effort: Some("none".to_string()),
-                exclude: Some(true),
-            }),
-        ),
-        _ => {
-            let effort = settings
-                .post_process_reasoning_efforts
-                .get(&provider.id)
-                .cloned()
-                .unwrap_or_else(|| "default".to_string());
-            if effort == "default" {
-                (None, None)
-            } else {
-                (Some(effort), None)
-            }
-        }
-    };
+    // Post-processing rarely benefits from reasoning and it adds latency.
+    // Preserve the fork's explicit "off" choice while adopting v0.9.5's
+    // provider-aware retry when an endpoint rejects reasoning controls.
+    let configured_reasoning = settings
+        .post_process_reasoning_efforts
+        .get(&provider.id)
+        .map(String::as_str)
+        .unwrap_or("default");
+    let disable_reasoning = matches!(provider.id.as_str(), "custom" | "openrouter")
+        || matches!(configured_reasoning, "none" | "off");
 
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
@@ -277,14 +277,14 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                 user_content.clone(),
                 Some(system_prompt.clone()),
                 Some(json_schema.clone()),
-                reasoning_effort.clone(),
-                reasoning.clone(),
+                disable_reasoning,
             )
             .await
             {
                 Ok(Some(content)) => {
-                    // Parse the JSON response to extract the transcription field
-                    match serde_json::from_str::<serde_json::Value>(&content) {
+                    // Parse the JSON response to extract the transcription field.
+                    let content = strip_think_block(&content);
+                    match serde_json::from_str::<serde_json::Value>(content) {
                         Ok(json) => {
                             if let Some(transcription_value) =
                                 json.get(TRANSCRIPTION_FIELD).and_then(|t| t.as_str())
@@ -301,7 +301,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 break;
                             } else {
                                 error!("Structured output response missing 'transcription' field");
-                                transcription_output = Some(strip_invisible_chars(&content));
+                                transcription_output = Some(strip_invisible_chars(content));
                                 structured_success = true;
                                 break;
                             }
@@ -311,7 +311,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 "Failed to parse structured output JSON: {}. Returning raw content.",
                                 e
                             );
-                            transcription_output = Some(strip_invisible_chars(&content));
+                            transcription_output = Some(strip_invisible_chars(content));
                             structured_success = true;
                             break;
                         }
@@ -358,13 +358,12 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             api_key.clone(),
             current_model,
             processed_prompt.clone(),
-            reasoning_effort.clone(),
-            reasoning.clone(),
+            disable_reasoning,
         )
         .await
         {
             Ok(Some(content)) => {
-                let content = strip_invisible_chars(&content);
+                let content = strip_invisible_chars(strip_think_block(&content));
                 debug!(
                     "LLM post-processing succeeded for provider '{}' with model '{}'. Output length: {} chars",
                     provider.id,
@@ -980,7 +979,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 
 #[cfg(test)]
 mod tests {
-    use super::{complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay};
+    use super::{
+        complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
+        strip_think_block,
+    };
     use crate::settings::OverlayStyle;
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1027,6 +1029,27 @@ mod tests {
 
         cancel_thread.join().unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn leading_think_block_is_stripped() {
+        assert_eq!(
+            strip_think_block("<think>pondering...</think>Cleaned text."),
+            "Cleaned text."
+        );
+        assert_eq!(
+            strip_think_block("  \n<think>multi\nline</think>\n  Cleaned text."),
+            "Cleaned text."
+        );
+    }
+
+    #[test]
+    fn content_without_think_block_is_unchanged() {
+        assert_eq!(strip_think_block("Cleaned text."), "Cleaned text.");
+        assert_eq!(
+            strip_think_block("<think>never closed"),
+            "<think>never closed"
+        );
     }
 
     #[test]

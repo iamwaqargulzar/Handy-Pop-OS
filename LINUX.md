@@ -281,9 +281,10 @@ This was verified at all three logical output origins: `(0,0)`, `(1920,0)`, and
 `(3840,0)`. See `docs/2026-08-01-overlay-changes-investigation.md` for the full
 diagnosis and regression checklist.
 
-Linux also initializes Enigo and shortcut state in the backend during hidden
-startup. This prevents tray-only or autostart sessions from transcribing text
-successfully but failing to paste with `Enigo state not initialized`.
+Linux initializes shortcut state during hidden startup and prepares Enigo in
+the background. Native Wayland paste methods (`wtype`/`wl-copy`) can proceed
+without waiting for the X11 keyboard-map scan, while Enigo remains available
+as a fallback after initialization.
 
 The GTK layer-shell overlay can be disabled when a compositor does not support
 it:
@@ -291,6 +292,19 @@ it:
 ```bash
 HANDY_NO_GTK_LAYER_SHELL=1 handy
 ```
+
+## Lower output volume while recording
+
+General Settings > Sound contains two related controls:
+
+- **Mute While Recording** fully mutes system output; and
+- **Lower Volume While Recording** reduces the current output level by the
+  selected percentage and restores the exact prior level afterward.
+
+Set the reduction slider to 0% to disable it. Full mute takes precedence when
+both settings have values. On Pop!_OS, Handy first uses PipeWire's `wpctl`,
+then falls back to `pactl` and `amixer`. Details and verification are recorded
+in `docs/2026-08-10-v0.9.5-volume-reduction.md`.
 
 ## Troubleshooting
 

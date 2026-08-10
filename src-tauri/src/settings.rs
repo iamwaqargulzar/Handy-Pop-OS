@@ -377,6 +377,10 @@ pub struct AppSettings {
     pub always_on_microphone: bool,
     #[serde(default)]
     pub selected_microphone: Option<String>,
+    /// Which input channel to use on the selected microphone device.
+    /// None means "average all channels" (original behavior).
+    #[serde(default)]
+    pub selected_channel: Option<u16>,
     #[serde(default)]
     pub clamshell_microphone: Option<String>,
     #[serde(default)]
@@ -427,6 +431,10 @@ pub struct AppSettings {
     pub post_process_selected_prompt_id: Option<String>,
     #[serde(default)]
     pub mute_while_recording: bool,
+    /// Percentage of the current output volume to reduce while recording.
+    /// Zero disables attenuation; full mute takes precedence when enabled.
+    #[serde(default)]
+    pub output_volume_reduction_percent: u8,
     #[serde(default)]
     pub append_trailing_space: bool,
     #[serde(default = "default_app_language")]
@@ -445,6 +453,11 @@ pub struct AppSettings {
     pub paste_delay_ms: u64,
     #[serde(default = "default_paste_delay_after_ms")]
     pub paste_delay_after_ms: u64,
+    /// Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
+    /// after the target app actually reads the transcript, instead of after a
+    /// fixed delay. See `paste_tx`. macOS and Windows only.
+    #[serde(default)]
+    pub reliable_paste: bool,
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
     #[serde(default)]
@@ -875,6 +888,7 @@ pub fn get_default_settings() -> AppSettings {
         onboarding_completed: false,
         always_on_microphone: false,
         selected_microphone: None,
+        selected_channel: None,
         clamshell_microphone: None,
         selected_output_device: None,
         translate_to_english: false,
@@ -900,6 +914,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
+        output_volume_reduction_percent: 0,
         append_trailing_space: false,
         app_language: default_app_language(),
         theme: default_theme(),
@@ -909,6 +924,7 @@ pub fn get_default_settings() -> AppSettings {
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
         paste_delay_after_ms: default_paste_delay_after_ms(),
+        reliable_paste: false,
         typing_tool: default_typing_tool(),
         external_script_path: None,
         custom_filler_words: None,
