@@ -148,6 +148,16 @@ Without these tools, Handy falls back to enigo which may have limited compatibil
 
 **Other Notes:**
 
+- **Global shortcut permission**: The low-level Linux shortcut implementation
+  reads `/dev/input`. Add the current user to the `input` group once, then log
+  out and back in:
+
+  ```bash
+  sudo usermod -aG input "$USER"
+  ```
+
+  Confirm the new session with `id -nG` before troubleshooting `Ctrl+Space`.
+
 - **Runtime library dependency (`libgtk-layer-shell.so.0`)**:
   - Handy links `gtk-layer-shell` on Linux. If startup fails with `error while loading shared libraries: libgtk-layer-shell.so.0`, install the runtime package for your distro:
 
@@ -159,7 +169,16 @@ Without these tools, Handy falls back to enigo which may have limited compatibil
 
   - For building from source on Ubuntu/Debian, you may also need `libgtk-layer-shell-dev`.
 
-- The recording overlay is disabled by default on Linux (`Overlay Position: None`) because certain compositors treat it as the active window. When the overlay is visible it can steal focus, which prevents Handy from pasting back into the application that triggered transcription. If you enable the overlay anyway, be aware that clipboard-based pasting might fail or end up in the wrong window.
+- On Linux, the recording overlay uses a non-focusable native GTK
+  layer-shell card. It shows recording levels and working states, and the
+  `Live` style displays incremental text for streaming-capable models. The
+  card follows the pointer monitor through Handy's low-level cursor path,
+  starts every session with an empty transcript, scales its live width to the
+  output, and becomes vertically scrollable after reaching half the output
+  height.
+- The Linux tray states use the same cool-blue accent as the dark interface.
+- Upstream update checks are disabled in the custom Linux package so an
+  official release cannot overwrite its fork-specific behavior.
 - If you are having trouble with the app, running with the environment variable `WEBKIT_DISABLE_DMABUF_RENDERER=1` may help
 - If Handy fails to start reliably on Linux, see [Troubleshooting → Linux Startup Crashes or Instability](#linux-startup-crashes-or-instability).
 - **Global keyboard shortcuts (Wayland):** On Wayland, system-level shortcuts must be configured through your desktop environment or window manager. Use the [CLI flags](#cli-parameters) as the command for your custom shortcut.
@@ -212,10 +231,12 @@ Without these tools, Handy falls back to enigo which may have limited compatibil
 
 **Overlay & Pasting Issues (Linux):**
 
-- The recording overlay window can interfere with pasting transcribed text into target applications on Linux (X11)
-- **Solution:** Open **Settings > Advanced** and set **"Overlay Position"** to **"None"** to disable the overlay
+- The native GTK overlay is non-focusable on supported layer-shell compositors
+  and should not interfere with the active target application.
+- If an unsupported compositor handles the window incorrectly, open
+  **Settings > Advanced** and set the overlay style to **None**, or launch with
+  `HANDY_NO_GTK_LAYER_SHELL=1`.
 - Enable **"Audio Feedback"** (also in Advanced) if you still want audible confirmation of recording state
-- Users who upgrade from older versions or import settings from other platforms may need to manually apply this change
 
 ### Platform Support
 

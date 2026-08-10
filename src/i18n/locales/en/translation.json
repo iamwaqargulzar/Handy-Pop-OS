@@ -648,6 +648,8 @@
     }
   },
   "overlay": {
+    "live": "Live",
+    "recording": "Recording",
     "transcribing": "Transcribing...",
     "processing": "Processing..."
   }

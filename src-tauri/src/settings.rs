@@ -499,7 +499,7 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_update_checks_enabled() -> bool {
-    true
+    !cfg!(target_os = "linux")
 }
 
 fn default_show_whats_new_on_update() -> bool {
@@ -1001,6 +1001,14 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     };
 
     if ensure_post_process_defaults(&mut settings) {
+        store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
+
+    // This Linux fork is distributed as a local package. Never let an
+    // upstream updater replace it and discard the fork-specific changes.
+    #[cfg(target_os = "linux")]
+    if settings.update_checks_enabled {
+        settings.update_checks_enabled = false;
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }
 

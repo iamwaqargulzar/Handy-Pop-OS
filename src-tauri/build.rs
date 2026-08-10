@@ -276,10 +276,10 @@ fn split_versioned_so(name: &str) -> Option<(&str, usize)> {
         .then_some((stem, comps.len()))
 }
 
-/// Generate tray menu translations from frontend locale files.
+/// Generate native UI translations from frontend locale files.
 ///
 /// Source of truth: src/i18n/locales/*/translation.json
-/// The English "tray" section defines the struct fields.
+/// The English "tray" section and selected overlay labels define the struct fields.
 fn generate_tray_translations() {
     use std::collections::BTreeMap;
     use std::fs;
@@ -307,8 +307,16 @@ fn generate_tray_translations() {
         let content = fs::read_to_string(&json_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-        if let Some(tray) = parsed.get("tray").cloned() {
-            translations.insert(lang, tray);
+        if let Some(mut native_strings) = parsed.get("tray").and_then(|v| v.as_object()).cloned() {
+            if let Some(overlay) = parsed.get("overlay").and_then(|v| v.as_object()) {
+                for key in ["live", "recording", "transcribing", "processing"] {
+                    if let Some(value) = overlay.get(key) {
+                        let field = format!("overlay{}", capitalize(key));
+                        native_strings.insert(field, value.clone());
+                    }
+                }
+            }
+            translations.insert(lang, serde_json::Value::Object(native_strings));
         }
     }
 
@@ -340,7 +348,11 @@ fn generate_tray_translations() {
     for (lang, tray) in &translations {
         out.push_str(&format!("    m.insert(\"{lang}\", TrayStrings {{\n"));
         for (rust_field, json_key) in &fields {
-            let val = tray.get(json_key).and_then(|v| v.as_str()).unwrap_or("");
+            let val = tray
+                .get(json_key)
+                .or_else(|| english.get(json_key))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             out.push_str(&format!(
                 "        {rust_field}: \"{}\".to_string(),\n",
                 escape_string(val)
@@ -358,6 +370,14 @@ fn generate_tray_translations() {
         translations.len(),
         fields.len()
     );
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default()
 }
 
 fn camel_to_snake(s: &str) -> String {

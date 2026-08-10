@@ -36,17 +36,17 @@ impl CurrentTrayIconState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AppTheme {
     Dark,
     Light,
-    Colored, // Pink/colored theme for Linux
+    Colored, // Accent-colored theme for Linux
 }
 
-/// Gets the current app theme, with Linux defaulting to Colored theme
+/// Gets the current app theme, with Linux defaulting to the accent-colored theme.
 pub fn get_current_theme(app: &AppHandle) -> AppTheme {
     if cfg!(target_os = "linux") {
-        // On Linux, always use the colored theme
+        // On Linux, always use the accent-colored theme.
         AppTheme::Colored
     } else {
         // On Windows the tray icon sits on the taskbar, which follows the
@@ -104,7 +104,8 @@ pub fn get_icon_path(theme: AppTheme, state: TrayIconState) -> &'static str {
         (AppTheme::Light, TrayIconState::Idle) => "resources/tray_idle_dark.png",
         (AppTheme::Light, TrayIconState::Recording) => "resources/tray_recording_dark.png",
         (AppTheme::Light, TrayIconState::Transcribing) => "resources/tray_transcribing_dark.png",
-        // Colored theme uses pink icons (for Linux)
+        // Linux uses this state icon family and applies the current accent tint
+        // when loading it.
         (AppTheme::Colored, TrayIconState::Idle) => "resources/handy.png",
         (AppTheme::Colored, TrayIconState::Recording) => "resources/recording.png",
         (AppTheme::Colored, TrayIconState::Transcribing) => "resources/transcribing.png",
@@ -125,6 +126,13 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
         app.path()
             .resolve(icon_path, tauri::path::BaseDirectory::Resource),
     )
+    .map(|image| {
+        if theme == AppTheme::Colored {
+            tint_icon(image, [0x7a, 0xa2, 0xf7])
+        } else {
+            image
+        }
+    })
     .and_then(|image| tray.set_icon(Some(image)))
     {
         error!("Failed to update tray icon '{icon_path}': {err}");
@@ -153,6 +161,21 @@ pub fn refresh_tray_icon(app: &AppHandle) {
 fn load_tray_icon(resolved_icon_path: tauri::Result<PathBuf>) -> tauri::Result<Image<'static>> {
     let resolved_icon_path = resolved_icon_path?;
     Image::from_path(&resolved_icon_path).map(Image::to_owned)
+}
+
+/// Recolors every visible pixel while preserving the source icon's alpha.
+/// Linux uses the colored icon family so tray states remain visible across
+/// panel themes; tinting here keeps those shapes aligned with the app accent.
+fn tint_icon(image: Image<'static>, color: [u8; 3]) -> Image<'static> {
+    let width = image.width();
+    let height = image.height();
+    let mut rgba = image.rgba().to_vec();
+    for pixel in rgba.chunks_exact_mut(4) {
+        if pixel[3] != 0 {
+            pixel[..3].copy_from_slice(&color);
+        }
+    }
+    Image::new_owned(rgba, width, height)
 }
 
 pub fn tray_tooltip() -> String {
@@ -294,7 +317,12 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
 
     let tray = app.state::<TrayIcon>();
     let _ = tray.set_menu(Some(menu));
+    // Template icons are intentionally monochrome and may be recolored by the
+    // desktop shell. Keep Linux's accent-colored pixels intact.
+    #[cfg(target_os = "macos")]
     let _ = tray.set_icon_as_template(true);
+    #[cfg(not(target_os = "macos"))]
+    let _ = tray.set_icon_as_template(false);
     let _ = tray.set_tooltip(Some(version_label));
 }
 
@@ -347,8 +375,9 @@ pub fn copy_last_transcript(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{last_transcript_text, load_tray_icon};
+    use super::{last_transcript_text, load_tray_icon, tint_icon};
     use crate::managers::history::HistoryEntry;
+    use tauri::image::Image;
 
     fn build_entry(transcription: &str, post_processed: Option<&str>) -> HistoryEntry {
         HistoryEntry {
@@ -386,5 +415,13 @@ mod tests {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let missing = dir.path().join("does_not_exist.png");
         assert!(load_tray_icon(Ok(missing)).is_err());
+    }
+
+    #[test]
+    fn tray_tint_preserves_alpha_and_recolors_only_visible_pixels() {
+        let image = Image::new_owned(vec![250, 162, 202, 128, 9, 8, 7, 0], 2, 1);
+        let tinted = tint_icon(image, [0x7a, 0xa2, 0xf7]);
+
+        assert_eq!(tinted.rgba(), &[0x7a, 0xa2, 0xf7, 128, 9, 8, 7, 0]);
     }
 }

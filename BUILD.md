@@ -140,9 +140,14 @@ The raw binary (`src-tauri/target/release/handy`) cannot run standalone — it n
 
 ```bash
 sudo apt install ./src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
+sudo usermod -aG input "$USER"
 ```
 
 The runtime libraries live in the app-private `/usr/lib/Handy/` (on the binary's rpath), so no `ldconfig` step is needed.
+Log out and back in after the `usermod` command. This activates access to
+`/dev/input`, which the low-level global shortcut implementation needs for
+`Ctrl+Space` on Linux. The package contains the application and its private
+runtime libraries, but intentionally does not alter user group membership.
 
 To inspect a bundle without installing it:
 

@@ -182,10 +182,25 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
-    // Note: Shortcuts are NOT initialized here.
-    // The frontend is responsible for calling the `initialize_shortcuts` command
-    // after permissions are confirmed (on macOS) or after onboarding completes.
-    // This matches the pattern used for Enigo initialization.
+    // Linux commonly starts hidden from the tray or autostart. A hidden WebView
+    // is not guaranteed to run the frontend onboarding effect, so initialize
+    // input injection and shortcuts here as well. Both commands are idempotent;
+    // the frontend may safely call them again when the main window is opened.
+    // macOS retains its permission-gated frontend flow.
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(error) = commands::initialize_enigo(app_handle.clone()) {
+            log::warn!("Linux input initialization failed: {error}");
+        }
+        if let Err(error) = commands::initialize_shortcuts(app_handle.clone()) {
+            log::warn!("Linux shortcut initialization failed: {error}");
+        }
+    }
+
+    // On macOS and other platforms not initialized above, the frontend calls
+    // `initialize_shortcuts` after permissions/onboarding. Linux's early call
+    // is required for tray-only startup and is safe because the command is
+    // idempotent.
 
     #[cfg(unix)]
     let signals = Signals::new([SIGUSR1, SIGUSR2]).unwrap();
@@ -220,7 +235,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         )
         .tooltip(tray::tray_tooltip())
         .show_menu_on_left_click(true)
-        .icon_as_template(true)
+        .icon_as_template(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id.as_ref() {
             "settings" => {
                 show_main_window(app);
@@ -280,8 +295,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         .unwrap();
     app_handle.manage(tray);
 
-    // Initialize tray menu with idle state
-    utils::update_tray_menu(app_handle, None);
+    // Initialize both the menu and the platform-specific idle icon. On Linux
+    // this also applies the cool-blue accent tint before the icon is shown.
+    tray::change_tray_icon(app_handle, tray::TrayIconState::Idle);
 
     // Apply show_tray_icon setting
     let settings = settings::get_settings(app_handle);

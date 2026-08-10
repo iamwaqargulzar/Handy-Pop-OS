@@ -1094,6 +1094,11 @@ impl TranscriptionManager {
 
     /// Emit a working-phase event to the streaming overlay (spinner + label).
     pub fn emit_stream_working(&self, kind: StreamWorkKind) {
+        #[cfg(target_os = "linux")]
+        crate::overlay::update_native_stream_working(
+            &self.app_handle,
+            kind == StreamWorkKind::Polishing,
+        );
         let _ = StreamPhaseEvent {
             phase: StreamPhase::Working,
             kind: Some(kind),
@@ -1102,6 +1107,8 @@ impl TranscriptionManager {
     }
 
     fn emit_stream_text(&self, committed: &str, tentative: &str) {
+        #[cfg(target_os = "linux")]
+        crate::overlay::update_native_stream_text(&self.app_handle, committed, tentative);
         let _ = StreamTextEvent {
             committed: committed.to_string(),
             tentative: tentative.to_string(),

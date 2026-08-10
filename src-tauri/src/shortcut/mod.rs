@@ -716,6 +716,27 @@ pub fn change_autostart_setting(app: AppHandle, enabled: bool) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+#[cfg(target_os = "linux")]
+pub fn change_update_checks_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let _ = enabled;
+    let mut settings = settings::get_settings(&app);
+    settings.update_checks_enabled = false;
+    settings::write_settings(&app, settings);
+
+    let _ = app.emit(
+        "settings-changed",
+        serde_json::json!({
+            "setting": "update_checks_enabled",
+            "value": false
+        }),
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+#[cfg(not(target_os = "linux"))]
 pub fn change_update_checks_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.update_checks_enabled = enabled;

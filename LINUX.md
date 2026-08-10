@@ -21,6 +21,12 @@ The Linux build retains:
 - Global hotkeys for switching downloaded models
 - CLI model switching with `handy --load-model <query>`
 - A dark neutral interface with a cool accent
+- A matching cool-blue tray icon for idle, recording, and transcribing states
+- A native dark GTK layer-shell overlay on Linux with recording levels,
+  transcribing/processing states, and a cancel control
+- Live text in the overlay when the selected model supports streaming
+- Update checks disabled so upstream releases cannot overwrite this custom
+  Linux build
 - Best-effort shortcut re-registration after a suspend/resume time gap
 
 The Win32 WTS session lock watcher remains Windows-only. On Linux, the
@@ -41,6 +47,39 @@ Dependencies are intentionally installed at the broadest sensible scope:
 
 Do not manually copy development libraries into `/usr/lib`. The packaged
 Handy runtime libraries belong in the private `/usr/lib/Handy/` directory.
+
+## Fresh Pop!\_OS installation
+
+The generated Debian package contains the complete customized application,
+including the Linux overlay and tray changes, frontend resources, VAD model,
+and Handy's private transcription runtime libraries. Speech-recognition
+models selected by the user are downloaded separately on first use.
+
+Install the package with APT so its declared runtime dependencies are resolved:
+
+```bash
+sudo apt install ./Handy_0.9.4_amd64.deb
+```
+
+Handy's low-level global shortcut implementation reads `/dev/input`. Grant the
+current user that one-time permission and then log out and back in:
+
+```bash
+sudo usermod -aG input "$USER"
+```
+
+Verify the new login session and installation:
+
+```bash
+id -nG | tr ' ' '\n' | grep -x input
+find /dev/input -maxdepth 1 -type c -readable | head
+dpkg-query -W -f='${Status} ${Version}\n' handy
+```
+
+The package does not silently change group membership. On a fresh machine,
+package installation and the `input` group command are therefore the only
+required system-level setup beyond normal Pop!\_OS graphics drivers. Development
+dependencies in the next section are needed only when building from source.
 
 ## Install prerequisites
 
@@ -169,6 +208,9 @@ sudo cp -a src-tauri/transcribe-libs/. /usr/lib/Handy/
 Installing the generated `.deb` is preferred because it also places icons,
 desktop metadata, resources, and runtime libraries correctly.
 
+This custom Linux build disables upstream update checks. Install newer custom
+builds explicitly through their generated `.deb` package.
+
 ## Vulkan acceleration
 
 The Linux target enables `transcribe-cpp` dynamic backends and Vulkan.
@@ -185,14 +227,63 @@ re-registers its hooks. This is useful after suspend/resume and severe
 scheduling delays on both Linux and Windows.
 
 Pop!\_OS may run a Wayland session. Wayland deliberately limits global input
-capture, so shortcut behavior depends on the compositor and the selected
-keyboard implementation. The watchdog improves recovery but does not override
-those security boundaries. If a shortcut still fails after resume:
+capture. Handy's low-level shortcut mode works on Pop!\_OS after the user joins
+the `input` group, but the watchdog does not override compositor security
+boundaries on other Wayland desktops. If a shortcut still fails after resume:
 
 1. Restart Handy.
-2. Try an X11 session to distinguish a Wayland policy limitation.
-3. Confirm `wtype` is installed for Wayland text injection.
-4. Review the terminal log for the watchdog reset message.
+2. Confirm the current session lists `input` in `id -nG`; logging out and back
+   in is required after changing group membership.
+3. Confirm at least one `/dev/input/event*` node is readable.
+4. Try an X11 session to distinguish a Wayland policy limitation.
+5. Confirm `wtype` is installed for Wayland text injection.
+6. Review the log for shortcut registration or watchdog reset messages.
+
+## Linux overlay behavior
+
+On COSMIC Wayland, converting Tauri's WebKitGTK overlay window into a
+layer-shell surface can leave the webview mapped without a submitted pixel
+buffer. Handy replaces only that Linux overlay child with a native GTK card.
+The normal main interface remains React/WebKitGTK.
+
+The native card:
+
+- follows the mouse pointer to the active monitor when a recording begins;
+- maps a fresh invisible 1×1 layer-shell probe at trigger time and assigns the
+  visible card to the GDK output COSMIC selected for that probe, avoiding
+  unavailable global Wayland pointer coordinates and mixed-DPI conversion;
+- anchors at the configured top or bottom edge without taking keyboard focus;
+- uses an 82%-opaque dark charcoal surface, a subtle black shadow, and the
+  cool-blue interface accent;
+- keeps the recording dot, status label, voice-level indicators, and cancel
+  control clear of the lower border with explicit bottom padding;
+- displays live audio levels while listening;
+- changes label for transcription and post-processing;
+- displays committed and tentative live text for streaming-capable models;
+- clears all transcript text before every new overlay session;
+- sizes live mode to 35% of the selected monitor width, clamped to 400–760
+  logical pixels; and
+- starts at the compact 400-pixel width and uses a 200ms cubic ease-out to
+  expand to that monitor-relative width when the first recognized text appears;
+- performs this width transition only once per recording session; and
+- grows with wrapped transcript text up to half the monitor height, then uses a
+  vertical scroller while retaining the cancel button.
+
+`Minimal` remains a compact status card. `Live` expands for incremental text
+only when the selected model advertises streaming support; non-streaming models
+continue to use the compact recording/transcribing states.
+
+Layer-shell surfaces ignore ordinary window coordinates on Wayland. Handy
+therefore asks COSMIC to map a new transparent probe whenever recording starts,
+reads that mapped probe's output, assigns the native card to the same monitor,
+and destroys the probe immediately. The production card never takes focus.
+This was verified at all three logical output origins: `(0,0)`, `(1920,0)`, and
+`(3840,0)`. See `docs/2026-08-01-overlay-changes-investigation.md` for the full
+diagnosis and regression checklist.
+
+Linux also initializes Enigo and shortcut state in the backend during hidden
+startup. This prevents tray-only or autostart sessions from transcribing text
+successfully but failing to paste with `Enigo state not initialized`.
 
 The GTK layer-shell overlay can be disabled when a compositor does not support
 it:
@@ -235,3 +326,25 @@ LD_LIBRARY_PATH=src-tauri/transcribe-libs ldd src-tauri/target/release/handy
 
 Runtime libraries generated for Handy should be packaged under
 `/usr/lib/Handy/`, not added broadly to `/usr/lib`.
+
+If a package reinstall appears to have made no visual difference, verify the
+executable of the running process:
+
+```bash
+readlink -f "/proc/$(pgrep -n handy)/exe"
+```
+
+It should report `/usr/bin/handy`. A previous user-local installation can
+shadow that binary through `~/.local/bin/handy`; repoint the launcher and
+restart Handy:
+
+```bash
+ln -sfn /usr/bin/handy ~/.local/bin/handy
+```
+
+If `Ctrl+Space` does not trigger and the log reports permission denied opening
+`/dev/input`, apply the fresh-install group step and start a new login session:
+
+```bash
+sudo usermod -aG input "$USER"
+```

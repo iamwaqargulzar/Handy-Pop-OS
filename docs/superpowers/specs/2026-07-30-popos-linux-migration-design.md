@@ -14,7 +14,10 @@ features already present in the repository.
 - Dynamic model-switch global shortcuts.
 - CLI model switching through `--load-model`.
 - Best-effort sleep/resume shortcut recovery on Linux.
-- Linux overlay, packaging, and runtime-library handling.
+- Native GTK layer-shell overlay with streaming text support.
+- Cool-blue Linux tray states matching the dark interface.
+- Upstream update checks disabled to preserve the custom Linux fork.
+- Linux packaging and app-private runtime-library handling.
 
 The removed Intel OpenVINO NPU backend is intentionally out of scope because it
 was Windows-only and is no longer required.
@@ -64,6 +67,16 @@ build output so incompatible project versions do not conflict.
   dark surfaces, readable off-white text, and a subtle cool accent.
 - Apply the palette through the shared theme tokens so the main window,
   controls, icons, and recording overlay remain visually consistent.
+- Tint the Linux colored tray state family to the same cool-blue accent without
+  changing the source icon silhouettes.
+- Keep the recording dot, status label, voice indicators, and cancel control
+  visually separated from the overlay's lower border.
+- On COSMIC Wayland, select the native layer-shell output through the existing
+  Tauri/Enigo cursor monitor and map it to GDK by logical geometry; do not rely
+  on GDK's unavailable global pointer coordinates.
+- Clear live transcript state at the start of every overlay session. Size live
+  mode to 35% of the selected output width (400–760 logical pixels), grow with
+  wrapped text up to half the output height, and scroll beyond that limit.
 - Preserve accessible contrast and visible focus, hover, warning, and error
   states.
 
@@ -77,6 +90,8 @@ Update `LINUX.md` and related Linux build instructions to:
 - install app-private runtime libraries under `/usr/lib/Handy`;
 - document Pop!\_OS dependencies, shared installation locations, shortcut
   recovery, and Wayland limitations accurately.
+- document the one-time `input` group permission needed by low-level global
+  shortcuts on a fresh installation.
 
 ## Verification
 
