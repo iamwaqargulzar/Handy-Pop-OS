@@ -182,24 +182,27 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
-    // Linux commonly starts hidden from the tray or autostart. A hidden WebView
-    // is not guaranteed to run the frontend onboarding effect, so initialize
-    // input injection and shortcuts here as well. Both commands are idempotent;
-    // the frontend may safely call them again when the main window is opened.
-    // macOS retains its permission-gated frontend flow.
+    // Linux commonly starts hidden from the tray or autostart. Register global
+    // shortcuts synchronously, but build Enigo on a worker: reading the full X11
+    // keyboard map can stall launch after a compositor/session transition.
+    // v0.9.5's native Linux paste paths do not require Enigo, and the background
+    // state remains available for fallback injection once ready.
     #[cfg(target_os = "linux")]
     {
-        if let Err(error) = commands::initialize_enigo(app_handle.clone()) {
-            log::warn!("Linux input initialization failed: {error}");
-        }
         if let Err(error) = commands::initialize_shortcuts(app_handle.clone()) {
             log::warn!("Linux shortcut initialization failed: {error}");
         }
+        let input_app = app_handle.clone();
+        std::thread::spawn(move || {
+            if let Err(error) = commands::initialize_enigo(input_app) {
+                log::warn!("Linux input initialization failed: {error}");
+            }
+        });
     }
 
     // On macOS and other platforms not initialized above, the frontend calls
-    // `initialize_shortcuts` after permissions/onboarding. Linux's early call
-    // is required for tray-only startup and is safe because the command is
+    // `initialize_shortcuts` after permissions/onboarding. Linux's early calls
+    // are required for tray-only startup and are safe because both commands are
     // idempotent.
 
     // Set up signal handlers for toggling transcription. On Linux, SIGUSR1 is
