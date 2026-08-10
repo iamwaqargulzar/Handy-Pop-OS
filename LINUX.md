@@ -1,6 +1,6 @@
 # Handy — Pop!\_OS Build and Deployment Guide
 
-This guide covers the current Handy `0.9.4` source tree on Pop!\_OS 24.04 and
+This guide covers the current Handy `0.9.5` source tree on Pop!\_OS 24.04 and
 other Ubuntu/Debian-based distributions. The retired Windows-only Intel NPU
 experiment is not part of this Linux build.
 
@@ -25,6 +25,8 @@ The Linux build retains:
 - A native dark GTK layer-shell overlay on Linux with recording levels,
   transcribing/processing states, and a cancel control
 - Live text in the overlay when the selected model supports streaming
+- Configurable 0–90% system-output reduction while recording, with exact
+  volume restoration afterward
 - Update checks disabled so upstream releases cannot overwrite this custom
   Linux build
 - Best-effort shortcut re-registration after a suspend/resume time gap
@@ -58,7 +60,7 @@ models selected by the user are downloaded separately on first use.
 Install the package with APT so its declared runtime dependencies are resolved:
 
 ```bash
-sudo apt install ./Handy_0.9.4_amd64.deb
+sudo apt install ./Handy_0.9.5_amd64.deb
 ```
 
 Handy's low-level global shortcut implementation reads `/dev/input`. Grant the

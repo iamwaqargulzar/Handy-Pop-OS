@@ -1,6 +1,6 @@
 # Handy Pop!\_OS Handover
 
-Last verified: 2026-08-01 (Asia/Karachi)
+Last verified: 2026-08-10 (Asia/Karachi)
 
 ## Purpose
 
@@ -13,14 +13,15 @@ and overlay work described below.
 ## Current state
 
 - Branch: `codex/popos-linux-build`
-- Base commit: `e95dc3b`
-- Application version: `0.9.4`
-- The working tree contains uncommitted implementation and documentation
-  changes. Do not discard or reset them.
+- Upstream release integrated: signed tag `v0.9.5`
+- Pop!_OS integration commit: `0b4ad7b`
+- Application version: `0.9.5`
+- Source and documentation changes are checkpointed in Git. The remaining
+  untracked root files are intentional backup/recovery artifacts.
 - The project was restored exactly from the complete 2026-08-01 backup before
   the final overlay correction. The backup itself remains untouched.
-- The final pointer-probe, opacity, height, and hidden-start fixes are packaged
-  and installed.
+- The final pointer-probe, opacity, height, hidden-start, responsive-startup,
+  and recording-volume reduction fixes are packaged and installed.
 - The running application resolves to `/usr/bin/handy` after the final launch.
 - `~/.local/bin/handy` resolves to `/usr/bin/handy`; this prevents the older
   user-local installation from shadowing the packaged executable.
@@ -35,19 +36,19 @@ them for provenance, but install the newly generated package under
 Package artifact:
 
 ```text
-src-tauri/target/release/bundle/deb/Handy_0.9.4_amd64.deb
+src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb
 ```
 
 Artifact SHA-256:
 
 ```text
-d4d2c8560edc1528f0326ef5420012fc75501c18ca4d4c16936146136061c31a
+36307f3a9f83f16c8e23e99859f0a8d5c3b9074ed28763c8f33743e886145583
 ```
 
 The SHA-256 of `/usr/bin/handy` matches the executable inside this package:
 
 ```text
-19136e3841abc7247614343623cde1445a8b88962289bc674b478905c06e6f7c
+bd75b7f1e5947c0233583fd29c6987bf87d48c0fc8b459382de2778776c18fad
 ```
 
 ## Implemented behavior
@@ -86,10 +87,19 @@ non-empty transcription update triggers a single 200ms cubic ease-out to the
 prescribed monitor-relative width (672 pixels on a 1920-pixel output). Later
 updates resize height as needed without replaying the width animation.
 
-Linux initializes Enigo and shortcuts from backend core startup as well as the
-idempotent frontend flow. This is required for `--start-hidden`, tray-only, and
-autostart launches; without it, recognition succeeded but paste failed with
-`Enigo state not initialized`.
+Linux registers shortcuts during backend startup and initializes Enigo on a
+background worker. Native Wayland paste paths no longer wait for the X11
+keyboard-map scan, while Enigo remains available as a fallback. This keeps
+`--start-hidden`, tray-only, and autostart launches responsive.
+
+### Lower output volume while recording
+
+General Settings > Sound provides a 0–90% **Lower Volume While Recording**
+slider. The percentage is relative to the current output level, and Handy
+restores the exact captured level after recording or stream recovery. A value
+of 0% disables attenuation; full **Mute While Recording** takes precedence.
+Pop!_OS uses PipeWire `wpctl`, with `pactl` and `amixer` fallbacks. The live
+backend check reduced `0.70` to `0.52` at 25% and restored exactly to `0.70`.
 
 The compact controls were verified in the live release at `y=39`, height `26`,
 inside a `72`-pixel-high frame, leaving a visible 7-pixel lower gap. The GTK
@@ -166,17 +176,18 @@ Results:
 
 - ESLint passed.
 - The TypeScript/Vite production frontend build passed.
-- All 133 Rust library tests passed, including the three monitor-relative live
-  overlay sizing tests.
+- All 179 Rust library tests passed, including monitor-relative live-overlay
+  sizing, Linux clipboard restoration, volume attenuation, clamping, and Linux
+  backend parsing.
 - Formatting and whitespace checks passed.
 - The production Debian package completed successfully.
 - The rebuilt release was run directly and tested on COSMIC Wayland.
 - The selected streaming-capable Parakeet model opened the live overlay on all
   three tested pointer outputs. Logs recorded `(0,0 1920x1200)`,
   `(1920,0 1920x1200)`, and `(3840,0 1920x1200)`.
-- Live transcription finalized correctly, and the hidden-start paste failure
-  was traced to missing Enigo state. The rebuilt backend now logs successful
-  Enigo and shortcut initialization before the overlay is created.
+- Live transcription finalized correctly. The installed v0.9.5 build logs
+  shortcuts, tray, Enigo, and the GTK overlay as ready within the same second;
+  Enigo's keyboard scan no longer blocks native Linux paste paths.
 - The native overlay was visible and its lower spacing was verified through
   its accessibility geometry.
 - The exported tray PNG was inspected and confirmed to use the blue accent.
@@ -186,6 +197,7 @@ Results:
 Existing non-blocking Rust warnings remain in unrelated code:
 
 - an unused `super::*` import in the clamshell tests; and
+- an unused platform-gated `Emitter` import in secure-input code; and
 - an initial assignment to `model_takes_initial_prompt` that is overwritten
   before it is read.
 
@@ -206,12 +218,11 @@ Install or reinstall the exact custom package:
 
 ```bash
 sudo dpkg -i \
-  "/home/waqar/Documents/projects/mine/Handy/src-tauri/target/release/bundle/deb/Handy_0.9.4_amd64.deb"
+  "/home/waqar/Documents/projects/mine/Handy/src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb"
 ```
 
-The version remains `0.9.4`, so a same-version reinstall must explicitly use
-the local package. Quit Handy before replacing the package, then launch it
-normally.
+The installed package version is `0.9.5`. Quit Handy before replacing the
+package, then launch it normally.
 
 On a fresh Linux account, grant shortcut access once:
 
@@ -304,14 +315,16 @@ ln -sfn /usr/bin/handy ~/.local/bin/handy
   multi-monitor, and streaming-size diagnosis and implementation record.
 - `docs/investigation-2026-08-01/README.md`: concise evidence ledger and manual
   regression matrix; no temporary probe programs are retained.
+- `docs/2026-08-10-v0.9.5-volume-reduction.md`: upstream integration conflict
+  decisions, recording-volume semantics, backend order, and verification.
 
 ## Next maintainer checklist
 
-1. Preserve the uncommitted working tree.
+1. Preserve the source commits and the untracked backup/recovery artifacts.
 2. Read `AGENTS.md`, `LINUX.md`, and this handover before editing.
 3. Run lint, Rust tests, and `git diff --check` after changes.
 4. Rebuild only the Debian bundle with `--no-sign`.
-5. Reinstall the local `.deb` explicitly because the version is unchanged.
+5. Reinstall the locally built `.deb` explicitly.
 6. Verify the running process resolves to `/usr/bin/handy`.
 7. Test the shortcut, all tray states, compact overlay, streaming overlay when
    a streaming-capable model is available, cancel action, and suspend/resume.
