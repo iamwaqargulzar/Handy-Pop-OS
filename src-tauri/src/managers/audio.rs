@@ -235,6 +235,8 @@ enum OutputVolumeBackend {
     #[cfg(target_os = "windows")]
     Windows,
     #[cfg(target_os = "linux")]
+    PulseAudioStreams,
+    #[cfg(target_os = "linux")]
     PipeWire,
     #[cfg(target_os = "linux")]
     PulseAudio,
@@ -244,11 +246,15 @@ enum OutputVolumeBackend {
     MacOs,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct OutputVolumeSnapshot {
     backend: OutputVolumeBackend,
     /// Normalized output level in the inclusive 0.0–1.0 range.
     scalar: f32,
+    /// Per-application playback stream levels used on Linux. Changing these
+    /// avoids COSMIC's master-volume OSD and feedback sound while recording.
+    #[cfg(target_os = "linux")]
+    stream_scalars: Vec<(u32, f32)>,
 }
 
 fn attenuated_volume(current: f32, reduction_percent: u8) -> f32 {
@@ -270,11 +276,73 @@ fn parse_first_percentage(output: &str) -> Option<f32> {
 }
 
 #[cfg(target_os = "linux")]
+fn parse_sink_input_volumes(output: &[u8]) -> Vec<(u32, f32)> {
+    let Ok(serde_json::Value::Array(streams)) = serde_json::from_slice(output) else {
+        return Vec::new();
+    };
+
+    streams
+        .into_iter()
+        .filter_map(|stream| {
+            let stream_id = u32::try_from(stream.get("index")?.as_u64()?).ok()?;
+            let volume = stream
+                .get("volume")?
+                .as_object()?
+                .values()
+                .find_map(|channel| {
+                    parse_first_percentage(channel.get("value_percent")?.as_str()?)
+                })?;
+            Some((stream_id, volume))
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
 fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
     use std::process::Command;
 
     if reduction_percent == 0 {
         return None;
+    }
+
+    // Prefer per-application playback streams over the physical output device.
+    // COSMIC's OSD subscribes to sink-volume changes, so changing the master
+    // sink here would display an OSD and play a feedback sound on every Handy
+    // recording start and stop. PipeWire's PulseAudio compatibility service
+    // exposes the active streams as sink inputs without changing the sink.
+    if let Ok(output) = Command::new("pactl")
+        .env("LC_ALL", "C")
+        .args(["--format=json", "list", "sink-inputs"])
+        .output()
+    {
+        if output.status.success() {
+            let mut stream_scalars = Vec::new();
+            for (stream_id, current) in parse_sink_input_volumes(&output.stdout) {
+                let stream_id_arg = stream_id.to_string();
+                let reduced_percent =
+                    (attenuated_volume(current, reduction_percent) * 100.0).round();
+                if Command::new("pactl")
+                    .args([
+                        "set-sink-input-volume",
+                        &stream_id_arg,
+                        &format!("{reduced_percent:.0}%"),
+                    ])
+                    .status()
+                    .is_ok_and(|status| status.success())
+                {
+                    stream_scalars.push((stream_id, current));
+                }
+            }
+
+            // A successful empty list means that nothing is currently playing.
+            // Treat that as a successful no-op instead of touching the master
+            // sink (which would unnecessarily trigger COSMIC's volume OSD).
+            return Some(OutputVolumeSnapshot {
+                backend: OutputVolumeBackend::PulseAudioStreams,
+                scalar: 0.0,
+                stream_scalars,
+            });
+        }
     }
 
     if let Ok(output) = Command::new("wpctl")
@@ -299,6 +367,7 @@ fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
                     return Some(OutputVolumeSnapshot {
                         backend: OutputVolumeBackend::PipeWire,
                         scalar: current,
+                        stream_scalars: Vec::new(),
                     });
                 }
             }
@@ -327,6 +396,7 @@ fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
                     return Some(OutputVolumeSnapshot {
                         backend: OutputVolumeBackend::PulseAudio,
                         scalar: current,
+                        stream_scalars: Vec::new(),
                     });
                 }
             }
@@ -351,6 +421,7 @@ fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
                     return Some(OutputVolumeSnapshot {
                         backend: OutputVolumeBackend::Alsa,
                         scalar: current,
+                        stream_scalars: Vec::new(),
                     });
                 }
             }
@@ -438,6 +509,22 @@ fn restore_output_volume(snapshot: OutputVolumeSnapshot) {
 
         let percent = (snapshot.scalar * 100.0).round();
         let restored = match snapshot.backend {
+            OutputVolumeBackend::PulseAudioStreams => {
+                for (stream_id, scalar) in snapshot.stream_scalars {
+                    let stream_id_arg = stream_id.to_string();
+                    let stream_percent = (scalar * 100.0).round();
+                    // Playback streams commonly disappear before recording
+                    // ends, so a failed restore for a vanished stream is safe.
+                    let _ = Command::new("pactl")
+                        .args([
+                            "set-sink-input-volume",
+                            &stream_id_arg,
+                            &format!("{stream_percent:.0}%"),
+                        ])
+                        .status();
+                }
+                return;
+            }
             OutputVolumeBackend::PipeWire => Command::new("wpctl")
                 .args([
                     "set-volume",
@@ -528,7 +615,7 @@ pub enum MicrophoneMode {
 
 /// Tracks the temporary output adjustment so the user's exact mute/volume state
 /// can be restored after recording, cancellation, or stream recovery.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 struct MuteState {
     did_mute: bool,
     prev_muted: Option<bool>,
@@ -1238,5 +1325,19 @@ mod output_volume_tests {
             parse_first_percentage("Mono: Playback 48 [48%] [on]"),
             Some(0.48)
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_sink_input_parser_accepts_pactl_json_format() {
+        let output = br#"[
+            {"index":71,"volume":{"front-left":{"value_percent":"70%"},"front-right":{"value_percent":"70%"}}},
+            {"index":105,"volume":{"mono":{"value_percent":"42%"}}}
+        ]"#;
+        assert_eq!(
+            parse_sink_input_volumes(output),
+            vec![(71, 0.7), (105, 0.42)]
+        );
+        assert!(parse_sink_input_volumes(b"").is_empty());
     }
 }

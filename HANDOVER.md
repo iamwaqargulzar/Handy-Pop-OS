@@ -42,13 +42,13 @@ src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb
 Artifact SHA-256:
 
 ```text
-36307f3a9f83f16c8e23e99859f0a8d5c3b9074ed28763c8f33743e886145583
+32d77d5239e40f571189af1a2eb3067de7f3e77e4491dadd8bbb2f84f1e25904
 ```
 
 The SHA-256 of `/usr/bin/handy` matches the executable inside this package:
 
 ```text
-bd75b7f1e5947c0233583fd29c6987bf87d48c0fc8b459382de2778776c18fad
+d756bf1974e427b6e86b9004e7c3667e024bb554192c272f93bbc6151c5cf484
 ```
 
 ## Implemented behavior
@@ -96,10 +96,14 @@ keyboard-map scan, while Enigo remains available as a fallback. This keeps
 
 General Settings > Sound provides a 0–90% **Lower Volume While Recording**
 slider. The percentage is relative to the current output level, and Handy
-restores the exact captured level after recording or stream recovery. A value
-of 0% disables attenuation; full **Mute While Recording** takes precedence.
-Pop!_OS uses PipeWire `wpctl`, with `pactl` and `amixer` fallbacks. The live
-backend check reduced `0.70` to `0.52` at 25% and restored exactly to `0.70`.
+restores the exact captured level after recording or stream recovery. On Linux,
+Handy lowers active application playback streams through PipeWire's PulseAudio
+compatibility API instead of changing the physical output device. This keeps
+COSMIC's volume OSD and feedback sound from appearing at every recording start
+and stop. A value of 0% disables attenuation; full **Mute While Recording**
+takes precedence. The live Pop!_OS check reduced a playback stream from 70% to
+28% at a 60% reduction, restored it to 70%, and kept the master output unchanged
+at 70% throughout.
 
 The compact controls were verified in the live release at `y=39`, height `26`,
 inside a `72`-pixel-high frame, leaving a visible 7-pixel lower gap. The GTK
@@ -176,7 +180,7 @@ Results:
 
 - ESLint passed.
 - The TypeScript/Vite production frontend build passed.
-- All 179 Rust library tests passed, including monitor-relative live-overlay
+- All 180 Rust library tests passed, including monitor-relative live-overlay
   sizing, Linux clipboard restoration, volume attenuation, clamping, and Linux
   backend parsing.
 - Formatting and whitespace checks passed.
