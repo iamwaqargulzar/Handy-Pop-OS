@@ -235,7 +235,7 @@ enum OutputVolumeBackend {
     #[cfg(target_os = "windows")]
     Windows,
     #[cfg(target_os = "linux")]
-    PulseAudioStreams,
+    PipeWireDucking,
     #[cfg(target_os = "linux")]
     PipeWire,
     #[cfg(target_os = "linux")]
@@ -246,15 +246,20 @@ enum OutputVolumeBackend {
     MacOs,
 }
 
-#[derive(Debug, Clone)]
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct LinuxDuckingSession {
+    loopback: std::process::Child,
+    cleanup_watchdog: std::process::Child,
+}
+
+#[derive(Debug)]
 struct OutputVolumeSnapshot {
     backend: OutputVolumeBackend,
     /// Normalized output level in the inclusive 0.0–1.0 range.
     scalar: f32,
-    /// Per-application playback stream levels used on Linux. Changing these
-    /// avoids COSMIC's master-volume OSD and feedback sound while recording.
     #[cfg(target_os = "linux")]
-    stream_scalars: Vec<(u32, f32)>,
+    ducking: Option<LinuxDuckingSession>,
 }
 
 fn attenuated_volume(current: f32, reduction_percent: u8) -> f32 {
@@ -276,25 +281,346 @@ fn parse_first_percentage(output: &str) -> Option<f32> {
 }
 
 #[cfg(target_os = "linux")]
-fn parse_sink_input_volumes(output: &[u8]) -> Vec<(u32, f32)> {
-    let Ok(serde_json::Value::Array(streams)) = serde_json::from_slice(output) else {
-        return Vec::new();
+#[derive(Clone, Debug, PartialEq)]
+struct LinuxDuckedLink {
+    output_port: String,
+    original_input_port: String,
+    duck_input_port: String,
+}
+
+#[cfg(target_os = "linux")]
+fn pipewire_ducking_plan(
+    output: &[u8],
+    default_sink_name: &str,
+    duck_sink_name: &str,
+    duck_output_name: &str,
+) -> Option<(u32, Vec<LinuxDuckedLink>)> {
+    use std::collections::HashMap;
+
+    let serde_json::Value::Array(objects) = serde_json::from_slice(output).ok()? else {
+        return None;
+    };
+    let node_id = |name: &str| {
+        objects.iter().find_map(|object| {
+            (object.get("type")?.as_str()? == "PipeWire:Interface:Node"
+                && object
+                    .pointer("/info/props/node.name")?
+                    .as_str()
+                    .is_some_and(|node_name| node_name == name))
+            .then(|| u32::try_from(object.get("id")?.as_u64()?).ok())
+            .flatten()
+        })
+    };
+    let default_sink_id = node_id(default_sink_name)?;
+    let duck_sink_id = node_id(duck_sink_name)?;
+    let duck_output_id = node_id(duck_output_name)?;
+
+    let node_names: HashMap<u32, String> = objects
+        .iter()
+        .filter_map(|object| {
+            if object.get("type")?.as_str()? != "PipeWire:Interface:Node" {
+                return None;
+            }
+            Some((
+                u32::try_from(object.get("id")?.as_u64()?).ok()?,
+                object
+                    .pointer("/info/props/node.name")?
+                    .as_str()?
+                    .to_owned(),
+            ))
+        })
+        .collect();
+    let mut port_endpoints = HashMap::new();
+    let mut default_channels = HashMap::new();
+    let mut duck_channels = HashMap::new();
+    for object in &objects {
+        if object.get("type").and_then(|value| value.as_str()) != Some("PipeWire:Interface:Port") {
+            continue;
+        }
+        let Some(port_id) = object
+            .get("id")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+        else {
+            continue;
+        };
+        let Some(port_node_id) = object
+            .pointer("/info/props/node.id")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+        else {
+            continue;
+        };
+        let Some(channel) = object
+            .pointer("/info/props/audio.channel")
+            .and_then(|value| value.as_str())
+        else {
+            continue;
+        };
+        let Some(port_name) = object
+            .pointer("/info/props/port.name")
+            .and_then(|value| value.as_str())
+        else {
+            continue;
+        };
+        let Some(node_name) = node_names.get(&port_node_id) else {
+            continue;
+        };
+        let endpoint = format!("{node_name}:{port_name}");
+        port_endpoints.insert(port_id, endpoint.clone());
+        let is_input = object
+            .pointer("/info/direction")
+            .and_then(|value| value.as_str())
+            == Some("input");
+        if port_node_id == default_sink_id && is_input {
+            default_channels.insert(port_id, channel.to_owned());
+        } else if port_node_id == duck_sink_id && is_input {
+            duck_channels.insert(channel.to_owned(), endpoint);
+        }
+    }
+
+    let links = objects
+        .iter()
+        .filter_map(|object| {
+            if object.get("type")?.as_str()? != "PipeWire:Interface:Link" {
+                return None;
+            }
+            let input_node =
+                u32::try_from(object.pointer("/info/input-node-id")?.as_u64()?).ok()?;
+            let output_node =
+                u32::try_from(object.pointer("/info/output-node-id")?.as_u64()?).ok()?;
+            if input_node != default_sink_id || output_node == duck_output_id {
+                return None;
+            }
+            let output_port =
+                u32::try_from(object.pointer("/info/output-port-id")?.as_u64()?).ok()?;
+            let original_input_port =
+                u32::try_from(object.pointer("/info/input-port-id")?.as_u64()?).ok()?;
+            let channel = default_channels.get(&original_input_port)?;
+            Some(LinuxDuckedLink {
+                output_port: port_endpoints.get(&output_port)?.clone(),
+                original_input_port: port_endpoints.get(&original_input_port)?.clone(),
+                duck_input_port: duck_channels.get(channel)?.clone(),
+            })
+        })
+        .collect();
+    Some((duck_output_id, links))
+}
+
+#[cfg(target_os = "linux")]
+fn stop_linux_ducking_process(process: &mut std::process::Child) {
+    // The child is a small watchdog shell. SIGTERM lets its trap terminate and
+    // reap pw-loopback; Child::kill would use SIGKILL and skip that cleanup.
+    unsafe {
+        libc::kill(process.id() as i32, libc::SIGTERM);
+    }
+    let _ = process.wait();
+}
+
+#[cfg(target_os = "linux")]
+fn start_pipewire_ducking(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
+    use std::process::{Command, Stdio};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let default_sink_output = Command::new("pactl")
+        .arg("get-default-sink")
+        .output()
+        .ok()?;
+    if !default_sink_output.status.success() {
+        return None;
+    }
+    let default_sink_name = String::from_utf8_lossy(&default_sink_output.stdout)
+        .trim()
+        .to_owned();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let duck_sink_name = format!("handy_duck_sink_{}_{}", std::process::id(), unique);
+    let duck_output_name = format!("handy_duck_output_{}_{}", std::process::id(), unique);
+    let capture_props = format!("node.name={duck_sink_name} media.class=Audio/Sink");
+    let playback_props = format!("node.name={duck_output_name} application.name=Handy-Ducking");
+
+    // Keep pw-loopback behind a wrapper so SIGTERM can reap it cleanly. A
+    // separate graph-cleanup watchdog is added below after the runtime links
+    // are known.
+    const LOOPBACK_WRAPPER: &str = r#"
+child_pid=
+cleanup() {
+    if [ -n "$child_pid" ]; then
+        kill "$child_pid" 2>/dev/null
+        wait "$child_pid" 2>/dev/null
+    fi
+}
+trap cleanup EXIT TERM INT
+"$@" &
+child_pid=$!
+wait "$child_pid"
+"#;
+    let parent_pid = std::process::id().to_string();
+    let mut loopback_command = Command::new("sh");
+    loopback_command
+        .args([
+            "-c",
+            LOOPBACK_WRAPPER,
+            "handy-duck-loopback",
+            "pw-loopback",
+            "--name",
+            &format!("handy_duck_{unique}"),
+            "--playback",
+            &default_sink_name,
+            "--capture-props",
+            &capture_props,
+            "--playback-props",
+            &playback_props,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut loopback = loopback_command.spawn().ok()?;
+
+    let mut plan = None;
+    for _ in 0..40 {
+        if loopback.try_wait().ok().flatten().is_some() {
+            return None;
+        }
+        let Ok(graph) = Command::new("pw-dump").output() else {
+            stop_linux_ducking_process(&mut loopback);
+            return None;
+        };
+        plan = pipewire_ducking_plan(
+            &graph.stdout,
+            &default_sink_name,
+            &duck_sink_name,
+            &duck_output_name,
+        );
+        if plan.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let Some(_) = plan else {
+        stop_linux_ducking_process(&mut loopback);
+        return None;
+    };
+    // The loopback nodes can become visible one graph cycle before existing
+    // playback links settle. Refresh after a short grace period so streams
+    // that were already playing when recording began are included.
+    std::thread::sleep(Duration::from_millis(75));
+    let Ok(graph) = Command::new("pw-dump").output() else {
+        stop_linux_ducking_process(&mut loopback);
+        return None;
+    };
+    let Some((duck_output_id, links)) = pipewire_ducking_plan(
+        &graph.stdout,
+        &default_sink_name,
+        &duck_sink_name,
+        &duck_output_name,
+    ) else {
+        stop_linux_ducking_process(&mut loopback);
+        return None;
     };
 
-    streams
-        .into_iter()
-        .filter_map(|stream| {
-            let stream_id = u32::try_from(stream.get("index")?.as_u64()?).ok()?;
-            let volume = stream
-                .get("volume")?
-                .as_object()?
-                .values()
-                .find_map(|channel| {
-                    parse_first_percentage(channel.get("value_percent")?.as_str()?)
-                })?;
-            Some((stream_id, volume))
-        })
-        .collect()
+    let gain = 1.0 - f32::from(reduction_percent.min(100)) / 100.0;
+    if !Command::new("wpctl")
+        .args([
+            "set-volume",
+            &duck_output_id.to_string(),
+            &format!("{gain:.4}"),
+        ])
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        stop_linux_ducking_process(&mut loopback);
+        return None;
+    }
+
+    // This process is independent from Handy's application logic. It restores
+    // the original graph and terminates the loopback when Handy exits, when
+    // the loopback fails, or when normal cleanup sends it SIGTERM. Because the
+    // link endpoints are passed as argv values, application/device names are
+    // not evaluated as shell text.
+    const CLEANUP_WATCHDOG: &str = r#"
+parent_pid=$1
+loopback_pid=$2
+shift 2
+cleaned=
+cleanup() {
+    if [ -n "$cleaned" ]; then return; fi
+    cleaned=1
+    while [ "$#" -ge 3 ]; do
+        pw-link --disconnect "$1" "$3" >/dev/null 2>&1
+        pw-link "$1" "$2" >/dev/null 2>&1
+        shift 3
+    done
+    kill -TERM "$loopback_pid" 2>/dev/null
+}
+trap 'cleanup "$@"; exit 0' TERM INT
+while kill -0 "$parent_pid" 2>/dev/null && kill -0 "$loopback_pid" 2>/dev/null; do
+    sleep 0.2
+done
+cleanup "$@"
+"#;
+    let loopback_pid = loopback.id().to_string();
+    let mut cleanup_command = Command::new("sh");
+    cleanup_command
+        .args([
+            "-c",
+            CLEANUP_WATCHDOG,
+            "handy-duck-cleanup",
+            &parent_pid,
+            &loopback_pid,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    for link in &links {
+        cleanup_command.args([
+            &link.output_port,
+            &link.original_input_port,
+            &link.duck_input_port,
+        ]);
+    }
+    let Ok(cleanup_watchdog) = cleanup_command.spawn() else {
+        stop_linux_ducking_process(&mut loopback);
+        return None;
+    };
+
+    let mut redirected_count = 0_usize;
+    for link in links {
+        debug!(
+            "Redirecting PipeWire link {} -> {} through {}",
+            link.output_port, link.original_input_port, link.duck_input_port
+        );
+        if !Command::new("pw-link")
+            .args(["--disconnect", &link.output_port, &link.original_input_port])
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            continue;
+        }
+        if Command::new("pw-link")
+            .args([&link.output_port, &link.duck_input_port])
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            redirected_count += 1;
+        } else {
+            let _ = Command::new("pw-link")
+                .args([&link.output_port, &link.original_input_port])
+                .status();
+        }
+    }
+    debug!("Redirected {redirected_count} PipeWire playback link(s) through ducking gain");
+
+    Some(OutputVolumeSnapshot {
+        backend: OutputVolumeBackend::PipeWireDucking,
+        scalar: 0.0,
+        ducking: Some(LinuxDuckingSession {
+            loopback,
+            cleanup_watchdog,
+        }),
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -305,44 +631,21 @@ fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
         return None;
     }
 
-    // Prefer per-application playback streams over the physical output device.
-    // COSMIC's OSD subscribes to sink-volume changes, so changing the master
-    // sink here would display an OSD and play a feedback sound on every Handy
-    // recording start and stop. PipeWire's PulseAudio compatibility service
-    // exposes the active streams as sink inputs without changing the sink.
-    if let Ok(output) = Command::new("pactl")
-        .env("LC_ALL", "C")
-        .args(["--format=json", "list", "sink-inputs"])
-        .output()
-    {
-        if output.status.success() {
-            let mut stream_scalars = Vec::new();
-            for (stream_id, current) in parse_sink_input_volumes(&output.stdout) {
-                let stream_id_arg = stream_id.to_string();
-                let reduced_percent =
-                    (attenuated_volume(current, reduction_percent) * 100.0).round();
-                if Command::new("pactl")
-                    .args([
-                        "set-sink-input-volume",
-                        &stream_id_arg,
-                        &format!("{reduced_percent:.0}%"),
-                    ])
-                    .status()
-                    .is_ok_and(|status| status.success())
-                {
-                    stream_scalars.push((stream_id, current));
-                }
-            }
-
-            // A successful empty list means that nothing is currently playing.
-            // Treat that as a successful no-op instead of touching the master
-            // sink (which would unnecessarily trigger COSMIC's volume OSD).
-            return Some(OutputVolumeSnapshot {
-                backend: OutputVolumeBackend::PulseAudioStreams,
-                scalar: 0.0,
-                stream_scalars,
-            });
-        }
+    // Route playback through a private gain node instead of modifying either
+    // saved application volumes or the physical sink. COSMIC only shows its
+    // volume OSD for changes to the physical sink. Vanished streams require no
+    // restoration because their own volume values are never changed.
+    if let Some(snapshot) = start_pipewire_ducking(reduction_percent) {
+        return Some(snapshot);
+    }
+    // On COSMIC, falling back to the master sink would reintroduce the OSD and
+    // feedback sound that this path exists to avoid. Fail open instead.
+    if std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
+        desktop
+            .split(':')
+            .any(|part| part.eq_ignore_ascii_case("COSMIC"))
+    }) {
+        return None;
     }
 
     if let Ok(output) = Command::new("wpctl")
@@ -367,7 +670,7 @@ fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
                     return Some(OutputVolumeSnapshot {
                         backend: OutputVolumeBackend::PipeWire,
                         scalar: current,
-                        stream_scalars: Vec::new(),
+                        ducking: None,
                     });
                 }
             }
@@ -396,7 +699,7 @@ fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
                     return Some(OutputVolumeSnapshot {
                         backend: OutputVolumeBackend::PulseAudio,
                         scalar: current,
-                        stream_scalars: Vec::new(),
+                        ducking: None,
                     });
                 }
             }
@@ -421,7 +724,7 @@ fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
                     return Some(OutputVolumeSnapshot {
                         backend: OutputVolumeBackend::Alsa,
                         scalar: current,
-                        stream_scalars: Vec::new(),
+                        ducking: None,
                     });
                 }
             }
@@ -509,19 +812,10 @@ fn restore_output_volume(snapshot: OutputVolumeSnapshot) {
 
         let percent = (snapshot.scalar * 100.0).round();
         let restored = match snapshot.backend {
-            OutputVolumeBackend::PulseAudioStreams => {
-                for (stream_id, scalar) in snapshot.stream_scalars {
-                    let stream_id_arg = stream_id.to_string();
-                    let stream_percent = (scalar * 100.0).round();
-                    // Playback streams commonly disappear before recording
-                    // ends, so a failed restore for a vanished stream is safe.
-                    let _ = Command::new("pactl")
-                        .args([
-                            "set-sink-input-volume",
-                            &stream_id_arg,
-                            &format!("{stream_percent:.0}%"),
-                        ])
-                        .status();
+            OutputVolumeBackend::PipeWireDucking => {
+                if let Some(mut ducking) = snapshot.ducking {
+                    stop_linux_ducking_process(&mut ducking.cleanup_watchdog);
+                    stop_linux_ducking_process(&mut ducking.loopback);
                 }
                 return;
             }
@@ -615,7 +909,7 @@ pub enum MicrophoneMode {
 
 /// Tracks the temporary output adjustment so the user's exact mute/volume state
 /// can be restored after recording, cancellation, or stream recovery.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 struct MuteState {
     did_mute: bool,
     prev_muted: Option<bool>,
@@ -1329,15 +1623,43 @@ mod output_volume_tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_sink_input_parser_accepts_pactl_json_format() {
+    fn linux_pipewire_graph_builds_runtime_link_plan() {
         let output = br#"[
-            {"index":71,"volume":{"front-left":{"value_percent":"70%"},"front-right":{"value_percent":"70%"}}},
-            {"index":105,"volume":{"mono":{"value_percent":"42%"}}}
+            {"id":75,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"default_sink"}}},
+            {"id":145,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"duck_sink"}}},
+            {"id":137,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"duck_output"}}},
+            {"id":153,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"Brave"}}},
+            {"id":40,"type":"PipeWire:Interface:Port","info":{"props":{"node.id":153,"audio.channel":"FL","port.name":"output_FL"}}},
+            {"id":114,"type":"PipeWire:Interface:Port","info":{"props":{"node.id":153,"audio.channel":"FR","port.name":"output_FR"}}},
+            {"id":67,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":75,"audio.channel":"FL","port.name":"playback_FL"}}},
+            {"id":66,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":75,"audio.channel":"FR","port.name":"playback_FR"}}},
+            {"id":138,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":145,"audio.channel":"FL","port.name":"playback_FL"}}},
+            {"id":134,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":145,"audio.channel":"FR","port.name":"playback_FR"}}},
+            {"id":116,"type":"PipeWire:Interface:Link","info":{"output-node-id":153,"output-port-id":40,"input-node-id":75,"input-port-id":67}},
+            {"id":89,"type":"PipeWire:Interface:Link","info":{"output-node-id":153,"output-port-id":114,"input-node-id":75,"input-port-id":66}},
+            {"id":92,"type":"PipeWire:Interface:Link","info":{"output-node-id":137,"output-port-id":146,"input-node-id":75,"input-port-id":67}}
         ]"#;
         assert_eq!(
-            parse_sink_input_volumes(output),
-            vec![(71, 0.7), (105, 0.42)]
+            pipewire_ducking_plan(output, "default_sink", "duck_sink", "duck_output"),
+            Some((
+                137,
+                vec![
+                    LinuxDuckedLink {
+                        output_port: "Brave:output_FL".to_owned(),
+                        original_input_port: "default_sink:playback_FL".to_owned(),
+                        duck_input_port: "duck_sink:playback_FL".to_owned(),
+                    },
+                    LinuxDuckedLink {
+                        output_port: "Brave:output_FR".to_owned(),
+                        original_input_port: "default_sink:playback_FR".to_owned(),
+                        duck_input_port: "duck_sink:playback_FR".to_owned(),
+                    }
+                ]
+            ))
         );
-        assert!(parse_sink_input_volumes(b"").is_empty());
+        assert_eq!(
+            pipewire_ducking_plan(b"", "default_sink", "duck_sink", "duck_output"),
+            None
+        );
     }
 }

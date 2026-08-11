@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only inside `/home/waqar/Documents/projects/mine/Handy`, except for installing explicitly required Pop!\_OS packages and per-user Rust/Bun tooling.
+- Work only inside the repository root, except for installing explicitly required Pop!\_OS packages and per-user Rust/Bun tooling.
 - Preserve all Linux-compatible custom application features.
 - Do not restore the Windows-only Intel OpenVINO NPU backend.
 - Install reusable native dependencies through `apt`; keep Bun and Rust user-managed.
@@ -60,10 +60,10 @@ Expected: the mass CRLF-only modifications disappear from `git status --short`.
 After confirming each exact path is inside the repository, remove:
 
 ```text
-/home/waqar/Documents/projects/mine/Handy/node_modules
-/home/waqar/Documents/projects/mine/Handy/dist
-/home/waqar/Documents/projects/mine/Handy/src-tauri/target
-/home/waqar/Documents/projects/mine/Handy/src-tauri/transcribe-libs
+./node_modules
+./dist
+./src-tauri/target
+./src-tauri/transcribe-libs
 ```
 
 Expected: no `.dll`, `.exe`, `.msi`, Windows-generated frontend output, or stale Cargo output remains.

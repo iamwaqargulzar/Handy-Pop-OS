@@ -300,16 +300,18 @@ HANDY_NO_GTK_LAYER_SHELL=1 handy
 General Settings > Sound contains two related controls:
 
 - **Mute While Recording** fully mutes system output; and
-- **Lower Volume While Recording** reduces active application playback streams
-  by the selected percentage and restores their exact prior levels afterward.
+- **Lower Volume While Recording** routes active application playback through a
+  temporary PipeWire gain node without changing saved application volumes.
 
 Set the reduction slider to 0% to disable it. Full mute takes precedence when
-both settings have values. On Pop!_OS, Handy uses PipeWire's PulseAudio
-compatibility interface to change playback streams without touching the master
-output device. This avoids COSMIC's volume OSD and feedback sound when recording
-starts and stops. If that interface is unavailable on another Linux desktop,
-Handy retains `wpctl`, `pactl`, and `amixer` master-volume fallbacks. Details and
-verification are recorded in
+both settings have values. On Pop!_OS, Handy uses `pw-loopback`, `pw-dump`,
+`pw-link`, and `wpctl` to create a private runtime-only gain path without
+touching the master output device. This avoids COSMIC's volume OSD and feedback
+sound when recording starts and stops. A cleanup watchdog restores the original
+links even if Handy crashes. If those PipeWire tools are unavailable on another
+Linux desktop, Handy retains `wpctl`, `pactl`, and `amixer` master-volume
+fallbacks; COSMIC deliberately fails open instead of using those fallbacks and
+triggering its OSD. Details and verification are recorded in
 `docs/2026-08-10-v0.9.5-volume-reduction.md`.
 
 ## Troubleshooting

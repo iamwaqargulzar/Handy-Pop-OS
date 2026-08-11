@@ -26,9 +26,7 @@ the card reaches half of the monitor height.
 Before making the final changes, the project was restored from the complete
 backup at:
 
-```text
-/home/waqar/Documents/projects/mine/Handy-backups/2026-08-01/
-```
+the local `2026-08-01` project backup (stored outside this repository).
 
 The restore used an exact mirror operation limited to this project folder.
 The backup was not modified. File counts and critical SHA-256 values were

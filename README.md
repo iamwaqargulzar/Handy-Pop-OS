@@ -1,5 +1,42 @@
 # Handy
 
+> [!NOTE]
+> **Handy Pop!_OS** is a Pop!_OS/COSMIC-focused community fork of
+> [the original Handy project by CJ Pais](https://github.com/cjpais/Handy).
+> It is not an official upstream release. The fork preserves Handy's MIT
+> License and its privacy-first, fully local transcription workflow.
+
+## Handy Pop!_OS additions
+
+This fork tracks upstream Handy (currently `v0.9.5`) while adding a polished
+Linux experience for Pop!_OS 24.04 and the COSMIC Wayland desktop:
+
+- **Native multi-monitor overlay:** a non-focusable GTK layer-shell overlay
+  opens on the display under the pointer, uses a compact translucent charcoal
+  card with a soft shadow, and grows smoothly when live text appears.
+- **Live transcription presentation:** streaming-capable models can show
+  tentative and committed text, voice indicators, recording state, processing
+  state, and a cancel control without taking focus from the target app.
+- **Crash-safe recording ducking:** a configurable 0–90% reduction lowers
+  active playback while recording through a private PipeWire gain node. It
+  does not change the physical output level or applications' saved volumes,
+  avoids COSMIC's volume OSD and feedback sound, and restores routing through
+  an independent watchdog even if Handy crashes.
+- **Dark Pop!_OS styling:** new installations use a neutral charcoal theme,
+  off-white text, a cool-blue accent, and matching blue tray states.
+- **Reliable Linux behavior:** faster hidden startup, improved Wayland paste
+  dispatch, and best-effort shortcut re-registration after suspend/resume.
+- **Model workflow enhancements:** assign global shortcuts to downloaded
+  models or switch from the command line with `handy --load-model <query>`.
+- **Post-processing fallback:** configure three priority models and
+  automatically try the next provider/model after an API or rate-limit error.
+- **Controlled upgrades:** upstream update checks are disabled on Linux so an
+  official package cannot silently replace the fork-specific behavior.
+
+See [LINUX.md](LINUX.md) for Pop!_OS dependencies, building, installation, and
+troubleshooting. Detailed implementation and verification notes are recorded
+in [HANDOVER.md](HANDOVER.md).
+
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)
 
 **A free, open source, and extensible speech-to-text application that works completely offline.**

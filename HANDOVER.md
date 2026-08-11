@@ -16,22 +16,22 @@ and overlay work described below.
 - Upstream release integrated: signed tag `v0.9.5`
 - Pop!_OS integration commit: `0b4ad7b`
 - Application version: `0.9.5`
-- Source and documentation changes are checkpointed in Git. The remaining
-  untracked root files are intentional backup/recovery artifacts.
+- Source and documentation changes are checkpointed in Git. Local backup and
+  recovery artifacts are intentionally untracked and are not part of the
+  public repository.
 - The project was restored exactly from the complete 2026-08-01 backup before
   the final overlay correction. The backup itself remains untouched.
 - The final pointer-probe, opacity, height, hidden-start, responsive-startup,
-  and recording-volume reduction fixes are packaged and installed.
-- The running application resolves to `/usr/bin/handy` after the final launch.
+  and recording-volume reduction fixes are packaged. Installation of the
+  latest package requires local administrator authentication.
+- After package installation, the application resolves to `/usr/bin/handy`.
 - `~/.local/bin/handy` resolves to `/usr/bin/handy`; this prevents the older
   user-local installation from shadowing the packaged executable.
 - Upstream update checks are disabled and the persisted setting is `false`.
 
-The restored root files `BACKUP_INFO.txt`, `SHA256SUMS`,
-`handy-all-refs.bundle`, and `Handy_0.9.4_amd64.deb` are backup-time recovery
-artifacts. Their recorded hashes describe the pre-correction snapshot. Keep
-them for provenance, but install the newly generated package under
-`src-tauri/target/release/bundle/deb/` for the final overlay behavior.
+Local backup-time recovery artifacts are not tracked or published. Install the
+newly generated package under `src-tauri/target/release/bundle/deb/` for the
+final behavior.
 
 Package artifact:
 
@@ -42,13 +42,13 @@ src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb
 Artifact SHA-256:
 
 ```text
-32d77d5239e40f571189af1a2eb3067de7f3e77e4491dadd8bbb2f84f1e25904
+7f453f28d574c105cfdfe1a1bfa435382ef4ca9b9038f23b3f52d04b1ce9154c
 ```
 
-The SHA-256 of `/usr/bin/handy` matches the executable inside this package:
+The SHA-256 of the executable inside this package is:
 
 ```text
-d756bf1974e427b6e86b9004e7c3667e024bb554192c272f93bbc6151c5cf484
+6c7ff2bc26f2e8959ea58f8f61a2848b93b5078b48f7675c24b6dc7987695780
 ```
 
 ## Implemented behavior
@@ -96,14 +96,16 @@ keyboard-map scan, while Enigo remains available as a fallback. This keeps
 
 General Settings > Sound provides a 0–90% **Lower Volume While Recording**
 slider. The percentage is relative to the current output level, and Handy
-restores the exact captured level after recording or stream recovery. On Linux,
-Handy lowers active application playback streams through PipeWire's PulseAudio
-compatibility API instead of changing the physical output device. This keeps
-COSMIC's volume OSD and feedback sound from appearing at every recording start
-and stop. A value of 0% disables attenuation; full **Mute While Recording**
-takes precedence. The live Pop!_OS check reduced a playback stream from 70% to
-28% at a 60% reduction, restored it to 70%, and kept the master output unchanged
-at 70% throughout.
+leaves saved application volumes and the physical output level unchanged. On
+Linux, Handy temporarily redirects active PipeWire playback links through a
+private gain node. This keeps COSMIC's volume OSD and feedback sound from
+appearing at every recording start and stop. A separate cleanup watchdog knows
+the original graph links and restores them on normal stop, stream recovery, or
+a full Handy crash before removing the gain node. A value of 0% disables
+attenuation; full **Mute While Recording** takes precedence. The live Pop!_OS
+checks used a 70% reduction (30% gain), including a disappearing playback stream
+and a forced `SIGKILL`; the master stayed at 99%, saved Brave/Music settings did
+not change, and playback links returned to the speaker in both cases.
 
 The compact controls were verified in the live release at `y=39`, height `26`,
 inside a `72`-pixel-high frame, leaving a visible 7-pixel lower gap. The GTK
@@ -222,7 +224,7 @@ Install or reinstall the exact custom package:
 
 ```bash
 sudo dpkg -i \
-  "/home/waqar/Documents/projects/mine/Handy/src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb"
+  "./src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb"
 ```
 
 The installed package version is `0.9.5`. Quit Handy before replacing the
