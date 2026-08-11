@@ -105,6 +105,9 @@ sudo apt install -y \
   libgtk-layer-shell0 \
   libgtk-layer-shell-dev \
   libopenblas-dev \
+  pipewire-bin \
+  pulseaudio-utils \
+  wireplumber \
   patchelf \
   xdg-utils \
   wtype
@@ -304,7 +307,7 @@ General Settings > Sound contains two related controls:
   temporary PipeWire gain node without changing saved application volumes.
 
 Set the reduction slider to 0% to disable it. Full mute takes precedence when
-both settings have values. On Pop!_OS, Handy uses `pw-loopback`, `pw-dump`,
+both settings have values. On Pop!\_OS, Handy uses `pw-loopback`, `pw-dump`,
 `pw-link`, and `wpctl` to create a private runtime-only gain path without
 touching the master output device. This avoids COSMIC's volume OSD and feedback
 sound when recording starts and stops. A cleanup watchdog restores the original

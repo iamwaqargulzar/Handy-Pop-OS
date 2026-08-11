@@ -76,10 +76,10 @@ permission, connector-name matching, Codex helper, or system modification.
 
 The observed GDK logical arrangement during investigation was:
 
-| Output  | Geometry                | Scale |
-| ------- | ----------------------- | ----- |
-| Output 1 | `(0, 0) 1920 × 1200`    | 1     |
-| Output 2 | `(1920, 0) 1920 × 1200` | 1     |
+| Output   | Geometry                | Scale            |
+| -------- | ----------------------- | ---------------- |
+| Output 1 | `(0, 0) 1920 × 1200`    | 1                |
+| Output 2 | `(1920, 0) 1920 × 1200` | 1                |
 | Output 3 | `(3840, 0) 1920 × 1200` | mixed-DPI layout |
 
 ### Fixed streaming geometry

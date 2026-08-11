@@ -45,7 +45,13 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libgtk-layer-shell0", "libopenblas0"],
+        "depends": [
+          "libgtk-layer-shell0",
+          "libopenblas0",
+          "pipewire-bin",
+          "pulseaudio-utils",
+          "wireplumber"
+        ],
         "files": {
           "/usr/lib/Handy": "transcribe-libs"
         }

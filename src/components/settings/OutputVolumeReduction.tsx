@@ -20,9 +20,7 @@ export const OutputVolumeReduction: React.FC<{ disabled?: boolean }> = ({
       max={90}
       step={5}
       label={t("settings.debug.lowerVolumeWhileRecording.label")}
-      description={t(
-        "settings.debug.lowerVolumeWhileRecording.description",
-      )}
+      description={t("settings.debug.lowerVolumeWhileRecording.description")}
       descriptionMode="tooltip"
       grouped
       formatValue={(value) => `${Math.round(value)}%`}

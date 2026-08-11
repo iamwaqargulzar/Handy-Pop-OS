@@ -14,7 +14,7 @@ and overlay work described below.
 
 - Branch: `codex/popos-linux-build`
 - Upstream release integrated: signed tag `v0.9.5`
-- Pop!_OS integration commit: `0b4ad7b`
+- Pop!\_OS integration commit: `0b4ad7b`
 - Application version: `0.9.5`
 - Source and documentation changes are checkpointed in Git. Local backup and
   recovery artifacts are intentionally untracked and are not part of the
@@ -42,7 +42,7 @@ src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb
 Artifact SHA-256:
 
 ```text
-7f453f28d574c105cfdfe1a1bfa435382ef4ca9b9038f23b3f52d04b1ce9154c
+318734973bd15ce93611c8d8e25f75882a8c4615974d61e16bc7804eb7efbf5c
 ```
 
 The SHA-256 of the executable inside this package is:
@@ -102,7 +102,7 @@ private gain node. This keeps COSMIC's volume OSD and feedback sound from
 appearing at every recording start and stop. A separate cleanup watchdog knows
 the original graph links and restores them on normal stop, stream recovery, or
 a full Handy crash before removing the gain node. A value of 0% disables
-attenuation; full **Mute While Recording** takes precedence. The live Pop!_OS
+attenuation; full **Mute While Recording** takes precedence. The live Pop!\_OS
 checks used a 70% reduction (30% gain), including a disappearing playback stream
 and a forced `SIGKILL`; the master stayed at 99%, saved Brave/Music settings did
 not change, and playback links returned to the speaker in both cases.

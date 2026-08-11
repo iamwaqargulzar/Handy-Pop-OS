@@ -1,0 +1,61 @@
+# Handy Pop!_OS
+
+> Offline speech-to-text and voice typing for Pop!_OS 24.04, COSMIC Wayland,
+> and PipeWire. The application runs Whisper-family or Parakeet transcription
+> models locally and pastes recognized text into the active application.
+
+Last verified: 2026-08-11
+Current release: 0.9.5-popos.1
+License: MIT
+Repository: https://github.com/iamwaqargulzar/Handy-Pop-OS
+Releases: https://github.com/iamwaqargulzar/Handy-Pop-OS/releases
+
+## Primary use cases
+
+- Offline voice typing on Pop!_OS
+- Local speech-to-text on COSMIC Wayland
+- Whisper or Parakeet desktop dictation on Linux
+- Multi-monitor speech transcription with a pointer-following overlay
+- Temporary playback reduction during recording without changing master volume
+
+## Distinctive capabilities
+
+- Native non-focusable GTK layer-shell overlay on the pointer's current display
+- Compact 72-pixel starting height and monitor-relative 400–760 pixel live width
+- 82%-opaque charcoal overlay with soft shadow and cool-blue controls
+- Streaming transcription display for models that support live recognition
+- Configurable 0–90% PipeWire playback reduction while recording
+- Private gain node that leaves master and saved application volumes unchanged
+- Independent cleanup watchdog that restores routing after normal stop or crash
+- Dark neutral interface and matching #7AA2F7 Linux tray icons
+- Improved Wayland paste dispatch and responsive hidden startup
+- Best-effort global shortcut recovery after suspend/resume
+- Global hotkeys and CLI commands for switching downloaded models
+- Three-model post-processing fallback chain
+- Linux update checks disabled to preserve custom behavior
+
+## Installation
+
+Download Handy_0.9.5_amd64.deb from the latest GitHub release, then run:
+
+sudo apt install ./Handy_0.9.5_amd64.deb
+sudo usermod -aG input "$USER"
+
+Log out and back in after adding the input group.
+
+## Technical architecture
+
+- Tauri 2 desktop application
+- Rust backend
+- React and TypeScript frontend
+- GTK 3 and GTK layer shell native Linux overlay
+- PipeWire and WirePlumber playback routing
+- Local Whisper-family and Parakeet transcription
+- Vulkan acceleration with CPU fallback
+
+## Documentation
+
+- Project overview and FAQ: https://github.com/iamwaqargulzar/Handy-Pop-OS#readme
+- Pop!_OS build guide: https://github.com/iamwaqargulzar/Handy-Pop-OS/blob/main/LINUX.md
+- Technical handover: https://github.com/iamwaqargulzar/Handy-Pop-OS/blob/main/HANDOVER.md
+- Crash-safe volume design: https://github.com/iamwaqargulzar/Handy-Pop-OS/blob/main/docs/2026-08-10-v0.9.5-volume-reduction.md
