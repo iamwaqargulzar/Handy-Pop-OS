@@ -678,35 +678,9 @@ impl ModelManager {
 
         #[cfg(target_os = "linux")]
         if super::openvino_npu::probe_available() {
-            available_models.insert(
-                "openvino-whisper-large-v3-int8".to_string(),
-                ModelInfo {
-                    id: "openvino-whisper-large-v3-int8".to_string(),
-                    name: "Whisper Large V3 (Intel NPU)".to_string(),
-                    description: "Full Whisper Large V3 INT8 accelerated by OpenVINO on Intel NPU."
-                        .to_string(),
-                    filename: "openvino-whisper-large-v3-int8".to_string(),
-                    source: ModelSource::OpenVinoSnapshot {
-                        repo_id: "OpenVINO/whisper-large-v3-int8-ov".to_string(),
-                        revision: "a888a75cc8b494a8a45400fd85f6bfa379ba3955".to_string(),
-                    },
-                    size_mb: 1490,
-                    is_downloaded: false,
-                    is_downloading: false,
-                    partial_size: 0,
-                    is_directory: true,
-                    engine_type: EngineType::OpenVinoNpu,
-                    accuracy_score: 1.0,
-                    speed_score: 0.95,
-                    supports_translation: true,
-                    is_recommended: false,
-                    supported_languages: whisper_languages.clone(),
-                    supports_language_selection: true,
-                    is_custom: false,
-                    supports_streaming: false,
-                    supports_language_detection: true,
-                },
-            );
+            for model in super::openvino_catalog::models(&whisper_languages) {
+                available_models.insert(model.id.clone(), model);
+            }
         }
 
         available_models.insert(
@@ -2400,39 +2374,54 @@ impl ModelManager {
         repo_id: &str,
         revision: &str,
     ) -> Result<()> {
-        const FILES: &[(&str, Option<&str>)] = &[
-            ("added_tokens.json", None),
-            ("config.json", None),
-            ("generation_config.json", None),
-            ("merges.txt", None),
-            ("normalizer.json", None),
-            ("openvino_config.json", None),
-            (
-                "openvino_decoder_model.bin",
-                Some("fdf13685d5a9c427b9aa5893c2baef362f1e4dddfbf5bf8a47fc03acb35a45ea"),
-            ),
-            ("openvino_decoder_model.xml", None),
-            (
-                "openvino_detokenizer.bin",
-                Some("f2b3c47825a1089525ff65c0c8e49271e1dee69a401a04fc827ac2de5b7766e4"),
-            ),
-            ("openvino_detokenizer.xml", None),
-            (
-                "openvino_encoder_model.bin",
-                Some("fffcbf47a4cfd5a1e3f57c0569f5ef706245b798ef626db5ffea7b84166ed865"),
-            ),
-            ("openvino_encoder_model.xml", None),
-            (
-                "openvino_tokenizer.bin",
-                Some("adfa3d9a2920d0f314121270a960ab331ec0f05838544bb8ecaaa422282a6fd4"),
-            ),
-            ("openvino_tokenizer.xml", None),
-            ("preprocessor_config.json", None),
-            ("special_tokens_map.json", None),
-            ("tokenizer.json", None),
-            ("tokenizer_config.json", None),
-            ("vocab.json", None),
-        ];
+        let metadata_url =
+            format!("https://huggingface.co/api/models/{repo_id}/revision/{revision}?blobs=true");
+        let metadata: serde_json::Value = reqwest::Client::new()
+            .get(&metadata_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if metadata.get("sha").and_then(serde_json::Value::as_str) != Some(revision) {
+            return Err(anyhow::anyhow!(
+                "Hugging Face returned an unexpected OpenVINO revision"
+            ));
+        }
+        let files: Vec<(String, u64, Option<String>)> = metadata
+            .get("siblings")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|file| {
+                let name = file.get("rfilename")?.as_str()?;
+                let allowed = !name.contains('/')
+                    && (name.ends_with(".json")
+                        || name.ends_with(".txt")
+                        || (name.starts_with("openvino_")
+                            && (name.ends_with(".bin") || name.ends_with(".xml"))));
+                allowed.then(|| {
+                    (
+                        name.to_string(),
+                        file.get("size")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(0),
+                        file.pointer("/lfs/sha256")
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned),
+                    )
+                })
+            })
+            .collect();
+        if !files
+            .iter()
+            .any(|(name, _, _)| name == "openvino_encoder_model.bin")
+            || !files
+                .iter()
+                .any(|(name, _, _)| name == "openvino_decoder_model.bin")
+        {
+            return Err(anyhow::anyhow!("OpenVINO snapshot manifest is incomplete"));
+        }
 
         let model_id = model_info.id.clone();
         let final_dir = self.models_dir.join(&model_info.filename);
@@ -2460,7 +2449,7 @@ impl ModelManager {
             disarmed: false,
         };
 
-        for (filename, sha256) in FILES {
+        for (filename, expected_size, sha256) in &files {
             let destination = partial_dir.join(filename);
             // Files reach this final name only after the resumable downloader
             // completes and (for large blobs) verifies the published hash.
@@ -2470,7 +2459,14 @@ impl ModelManager {
             let download = partial_dir.join(format!("{filename}.download"));
             let url = format!("https://huggingface.co/{repo_id}/resolve/{revision}/{filename}");
             match self
-                .download_http_resumable(&model_id, &url, &download, None, *sha256, &cancel_token)
+                .download_http_resumable(
+                    &model_id,
+                    &url,
+                    &download,
+                    Some(*expected_size),
+                    sha256.as_deref(),
+                    &cancel_token,
+                )
                 .await?
             {
                 HttpDownloadOutcome::Cancelled => return Ok(()),

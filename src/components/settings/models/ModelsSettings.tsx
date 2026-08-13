@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import {
   AudioLines,
   ChevronDown,
+  Cpu,
   Globe,
   Languages,
   RefreshCw,
@@ -36,6 +37,7 @@ export const ModelsSettings: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStreaming, setFilterStreaming] = useState(false);
   const [filterTranslation, setFilterTranslation] = useState(false);
+  const [filterNpu, setFilterNpu] = useState(false);
   const [languageFilter, setLanguageFilter] = useState("all");
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
   const [languageSearch, setLanguageSearch] = useState("");
@@ -57,6 +59,9 @@ export const ModelsSettings: React.FC = () => {
     deleteModel,
     rescanLocalModels,
   } = useModelStore();
+  const hasNpuModels = models.some(
+    (model: ModelInfo) => model.engine_type === "OpenVinoNpu",
+  );
 
   // click outside handler for language dropdown
   useEffect(() => {
@@ -184,6 +189,7 @@ export const ModelsSettings: React.FC = () => {
       }
       if (filterStreaming && !model.supports_streaming) return false;
       if (filterTranslation && !model.supports_translation) return false;
+      if (filterNpu && model.engine_type !== "OpenVinoNpu") return false;
 
       if (q) {
         const haystack = `${model.name} ${model.description}`.toLowerCase();
@@ -191,7 +197,14 @@ export const ModelsSettings: React.FC = () => {
       }
       return true;
     });
-  }, [models, languageFilter, filterStreaming, filterTranslation, searchQuery]);
+  }, [
+    models,
+    languageFilter,
+    filterStreaming,
+    filterTranslation,
+    filterNpu,
+    searchQuery,
+  ]);
 
   // Split filtered models into downloaded (including custom) and available sections
   const { downloadedModels, availableModels } = useMemo(() => {
@@ -310,6 +323,22 @@ export const ModelsSettings: React.FC = () => {
               >
                 <Languages className="w-3.5 h-3.5" />
               </button>
+              {hasNpuModels && (
+                <button
+                  type="button"
+                  onClick={() => setFilterNpu((enabled) => !enabled)}
+                  title={t("settings.models.filters.npu")}
+                  aria-label={t("settings.models.filters.npu")}
+                  aria-pressed={filterNpu}
+                  className={`flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg transition-colors ${
+                    filterNpu
+                      ? "bg-logo-primary/20 text-logo-primary hover:bg-logo-primary/30"
+                      : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
+                  }`}
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                </button>
+              )}
               {/* Language filter dropdown */}
               <div className="relative" ref={languageDropdownRef}>
                 <button

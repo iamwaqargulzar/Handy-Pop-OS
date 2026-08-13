@@ -61,6 +61,27 @@ custom native overlay/theme path. No other reviewed change was added merely
 because it was newer; anything beneficial that conflicts with fork behavior
 must be presented before application.
 
+## NPU catalogue and Auto-language correction (2026-08-13)
+
+The initial installed integration exposed only full Whisper Large V3 INT8. It
+also sent the literal string `auto` to OpenVINO, causing three user
+transcriptions to fail after the model had correctly compiled on NPU. Auto now
+leaves the worker language unset so OpenVINO performs detection; explicit
+languages are normalized to Whisper tokens such as `<|en|>`.
+
+The NPU-only catalogue now contains 39 immutable official OpenVINO revisions:
+Whisper Turbo, Large V2/V3, Distil Large V2/V3, Medium, Small, Base, and Tiny;
+multilingual and English-only variants; and INT4, INT8, and FP16 precision where
+published. Model downloads obtain the pinned revision manifest, enforce file
+sizes, and verify every Hugging Face LFS SHA-256. Parakeet and other non-Whisper
+architectures are not falsely routed through ASRPipeline.
+
+The Models page displays an NPU-only filter beside Streaming and Translation
+only when backend probing exposes NPU models. The installed package was tested
+with the previously failing Auto-language recording: cold load completed in
+159.545 seconds and NPU transcription completed in 1.505 seconds with
+`actual_device: NPU`.
+
 Last verified: 2026-08-13 (Asia/Karachi)
 
 ## Purpose

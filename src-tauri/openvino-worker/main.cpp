@@ -167,7 +167,8 @@ json process_request(const json& request, std::vector<unsigned char>& payload,
         std::vector<float> audio(payload.size() / sizeof(float));
         std::memcpy(audio.data(), payload.data(), payload.size());
         auto config = state.pipeline->get_generation_config();
-        config.language = request.value("language", "<|en|>");
+        const std::string language = request.value("language", "");
+        if (!language.empty()) config.language = language;
         const std::string task = request.value("task", "transcribe");
         if (task != "transcribe" && task != "translate")
             return error_response("invalid_task", "task must be transcribe or translate");

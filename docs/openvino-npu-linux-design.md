@@ -129,9 +129,12 @@ precision: int8
 architecture: whisper-large-v3
 ```
 
-Initial entry: `OpenVINO/whisper-large-v3-int8-ov`. INT4, Turbo, and distilled
-variants remain unapproved until their accuracy tradeoffs are measured. TDT is
-a Parakeet decoder architecture, not a mode for Distil-Whisper.
+The catalogue contains 39 pinned official OpenVINO Whisper repositories across
+Turbo, Large V2/V3, Distil Large V2/V3, Medium, Small, Base, and Tiny; INT4,
+INT8, and FP16; and multilingual/English variants where published. Download
+manifests are resolved at immutable revisions, sizes are enforced, and LFS
+files are SHA-256 verified. TDT remains a different Parakeet architecture and
+is not routed through the Whisper pipeline.
 
 Downloads must reuse Handy's progress, checksum, activation, hotkey, CLI, and
 deletion behavior. Deletion invalidates only that model's cache.

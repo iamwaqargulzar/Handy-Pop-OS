@@ -56,9 +56,10 @@ Handy runtime libraries belong in the private `/usr/lib/Handy/` directory.
 
 The generated Debian package contains the complete customized application,
 including the Linux overlay and tray changes, frontend resources, VAD model,
-and Handy's private conventional and OpenVINO transcription runtimes. The
-roughly 1.57 GB OpenVINO model is not bundled; it appears only when the private
-worker detects an NPU and is downloaded on user request.
+and Handy's private conventional and OpenVINO transcription runtimes. OpenVINO
+weights are not bundled; the 39-model official Whisper catalogue appears only
+when the private worker detects an NPU, and each selected model is downloaded
+on user request.
 
 Install the package with APT so its declared runtime dependencies are resolved:
 

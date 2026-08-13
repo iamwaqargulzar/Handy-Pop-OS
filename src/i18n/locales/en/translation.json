@@ -213,7 +213,8 @@
       "filters": {
         "allLanguages": "All Languages",
         "streaming": "Filter models that support live streaming transcription",
-        "translation": "Filter models that support translation to English"
+        "translation": "Filter models that support translation to English",
+        "npu": "Show Intel NPU models only"
       },
       "rescan": {
         "label": "Rescan",

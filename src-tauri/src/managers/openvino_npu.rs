@@ -79,11 +79,7 @@ impl OpenVinoNpuEngine {
         language: &str,
         translate_to_english: bool,
     ) -> Result<String> {
-        let language = if language == "auto" {
-            "auto".to_string()
-        } else {
-            format!("<|{}|>", language)
-        };
+        let language = openvino_language_token(language);
         // f32 audio is native little-endian on supported Linux x86_64 builds.
         let payload = unsafe {
             std::slice::from_raw_parts(audio.as_ptr().cast::<u8>(), std::mem::size_of_val(audio))
@@ -149,6 +145,34 @@ impl OpenVinoNpuEngine {
             return Err(anyhow!("{code}: {message}"));
         }
         Ok(response)
+    }
+}
+
+fn openvino_language_token(language: &str) -> String {
+    if language == "auto" || language.is_empty() {
+        String::new()
+    } else if language.starts_with("<|") && language.ends_with("|>") {
+        language.to_string()
+    } else {
+        format!("<|{language}|>")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::openvino_language_token;
+
+    #[test]
+    fn auto_language_leaves_openvino_detection_enabled() {
+        assert_eq!(openvino_language_token("auto"), "");
+        assert_eq!(openvino_language_token(""), "");
+    }
+
+    #[test]
+    fn explicit_languages_use_whisper_tokens_once() {
+        assert_eq!(openvino_language_token("en"), "<|en|>");
+        assert_eq!(openvino_language_token("ur"), "<|ur|>");
+        assert_eq!(openvino_language_token("<|fr|>"), "<|fr|>");
     }
 }
 
