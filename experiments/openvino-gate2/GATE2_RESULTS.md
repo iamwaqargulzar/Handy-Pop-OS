@@ -2,7 +2,7 @@
 
 Date: 2026-08-13
 
-Status: memory optimization exhausted; full Large V3 configuration rejected
+Status: memory optimization experiments complete; integration decision pending
 
 ## Isolation
 
@@ -31,9 +31,9 @@ and removes the socket.
 
 ## Memory measurements
 
-The user-defined acceptance target is approximately 2.5 GiB sustained warm
-RSS. Measurements came directly from `/proc/<worker>/status`, not a peak-only
-summary.
+Measurements came directly from `/proc/<worker>/status`, not a peak-only
+summary. Previous platform observations are not requirements or acceptance
+thresholds.
 
 | State | RSS / high-water result |
 | --- | ---: |
@@ -48,8 +48,8 @@ summary.
 | After worker exit | zero; process and socket absent |
 
 Calling glibc `malloc_trim(0)` after load reduced the retained warm footprint
-by roughly 1.1 GiB but did not bring it within budget. The remaining memory is
-not merely all reclaimable compiler heap under this runtime configuration.
+by roughly 1.1 GiB. The remaining memory is not merely all reclaimable compiler
+heap under this runtime configuration.
 
 ## Repeated transcription
 
@@ -70,14 +70,10 @@ time and honestly reported `actual_device: NPU`.
 
 ## Current decision
 
-Do **not** integrate this configuration into production Handy. It is stable and
-does not leak across repeated transcriptions, but approximately 4.51 GiB warm
-RSS materially exceeds the accepted 2.5 GiB budget.
-
-Gate 2 may continue only with bounded memory-reduction experiments that retain
-full Whisper Large V3 accuracy. The threshold must not be silently relaxed.
-If no reasonable runtime/driver/configuration change reaches the target, apply
-the documented complete-removal path and keep conventional Handy unchanged.
+The prototype is stable, does not leak across repeated transcriptions, and uses
+approximately 4.51 GiB warm RSS. This is a measured implementation tradeoff,
+not a failed user requirement. Production integration remains unstarted while
+the footprint, cold-load delay, package size, and NPU performance are weighed.
 
 ## Memory-reduction experiments
 
@@ -108,18 +104,17 @@ cannot be treated as a Linux memory forecast.
 
 ### Final memory decision
 
-The lowest correct sustained Linux result was approximately 4.50 GiB, about
-2 GiB over the accepted 2.5 GiB budget. Repeated runs do not leak and unload
-returns the worker to roughly 449 MiB, but loading again costs approximately
-2.5 minutes. An unload-after-every-transcription workaround is therefore not a
-usable product design.
+The lowest correct sustained Linux result was approximately 4.50 GiB. Repeated
+runs do not leak and unload returns the worker to roughly 449 MiB, but loading
+again costs approximately 2.5 minutes. An unload-after-every-transcription
+workaround is therefore not a usable product design.
 
-The full Large V3 OpenVINO route is rejected for production in its current
-form. Do not merge the worker or package OpenVINO into Handy. A future attempt
-requires a materially different Intel runtime/driver or a different model that
-the user explicitly accepts; it must start from the same 2.5 GiB memory gate.
+The full Large V3 OpenVINO route remains a technically viable candidate with a
+substantial measured memory and cold-load cost. Do not merge the experimental
+worker merely on the strength of feasibility results; complete the remaining
+reliability and packaging gates before production integration.
 
-## Reliability tests not pursued after memory rejection
+## Reliability tests still pending
 
 - malformed, oversized, truncated, and wrong-version protocol frames;
 - concurrent request rejection while load/inference is active;

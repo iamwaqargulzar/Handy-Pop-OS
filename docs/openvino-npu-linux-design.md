@@ -1,6 +1,6 @@
 # OpenVINO NPU Integration for Handy Pop!_OS
 
-Status: Gate 1 feasible; Gate 2 rejected on sustained memory
+Status: Gate 1 feasible; Gate 2 memory research complete, integration pending
 
 Last updated: 2026-08-13
 
@@ -160,29 +160,24 @@ files, correct full Large V3 INT8 execution, stable forced English through
 `ASRPipeline`, repeatable warm timing, and clean process restart. See
 `experiments/openvino-gate1/GATE1_RESULTS.md`.
 
-### Gate 2 — rejected: worker reliability and memory
+### Gate 2 — memory research complete; reliability work pending
 
 Test framing and malformed requests, cancellation/restart, corrupt models,
 driver/runtime failure, suspend/resume, repeated load/unload, concurrent
 trigger rejection, and isolation from Handy state.
 
-Gate 2 also has a user-defined memory acceptance threshold. Measure process
-RSS before load, compilation peak, warm idle after compilation, after each of
-at least five transcriptions, after unload, and after worker exit. Sustained
-warm idle usage should be no more than approximately 2.5 GiB, matching the
-primary user's acceptable Windows experience. The already-observed 6.9 GiB
-cold peak is recorded separately and is not treated as sustained usage. Memory
-must not grow monotonically across transcriptions. If the warm footprint stays
-materially above 2.5 GiB and cannot be reduced without compromising the chosen
-full Large V3 model, the NPU integration should be rejected and removable in
-full under the isolation requirement above.
+Gate 2 measures process RSS before load, compilation peak, warm idle after
+compilation, after each of at least five transcriptions, after unload, and
+after worker exit. Previous platform observations are not requirements or
+acceptance thresholds. Memory must not grow monotonically across
+transcriptions.
 
 Gate 2 measured a best correct warm RSS of approximately 4.50 GiB after testing
 allocator trimming, both OpenVINO speech APIs, supported NPU memory properties,
 native Level Zero, OpenVINO 2026.2/2026.3, and the historical stateless export
-path. This exceeds the 2.5 GiB acceptance limit. The production integration is
-therefore rejected and must not proceed to Gate 3. Detailed evidence is in
-`experiments/openvino-gate2/GATE2_RESULTS.md`.
+path. Repeated inference was stable without measurable per-transcription
+growth. These measurements inform the product tradeoff but do not reject the
+integration. Detailed evidence is in `experiments/openvino-gate2/GATE2_RESULTS.md`.
 
 ### Gate 3: model UI integration
 

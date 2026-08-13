@@ -15,12 +15,12 @@ Removal must leave the existing `transcribe-cpp` and `transcribe-rs` model
 paths unchanged and buildable. OpenVINO shared libraries remain worker-private
 and are never linked into `/usr/bin/handy`.
 
-## Rejection trigger
+## Evaluation and removal trigger
 
-The primary user's sustained warm-RAM budget is approximately 2.5 GiB. Gate 2
-must measure rather than infer the steady state. Reject and remove the feature
-if full Whisper Large V3 remains materially above that budget after reasonable
-runtime and lifecycle optimization, or if repeated transcription leaks memory.
+Gate 2 must measure rather than infer the steady state. Previous platform
+observations are not user-defined limits. Reject and remove the feature if it
+proves unreliable, leaks memory across repeated transcription, or the user
+decides its measured product tradeoffs are not worthwhile.
 
 Cold compilation peak, warm idle, every repeated run, unload, and process exit
 must be reported separately. A peak-RSS-only number is insufficient.
@@ -33,10 +33,10 @@ must be reported separately. A peak-RSS-only number is insufficient.
 
 No production Handy source or package manifest has been modified at this point.
 
-## Applied decision
+## Current decision
 
-Gate 2 failed the 2.5 GiB sustained warm-RAM threshold. No production feature
-was integrated, so removal requires no edit to Handy. All experiment downloads,
-models, runtimes, caches, audio, reports, and build outputs are disposable and
-are cleaned according to `ARTIFACTS.md`. Only the tracked feasibility source
-and evidence remain for future reference.
+No production feature has been integrated, so removing the experiment requires
+no edit to Handy. All experiment downloads, models, runtimes, caches, audio,
+reports, and build outputs are disposable and are cleaned according to
+`ARTIFACTS.md`. Only the tracked feasibility source and evidence remain for
+future reference.

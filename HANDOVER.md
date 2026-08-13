@@ -5,16 +5,17 @@
 The Linux OpenVINO work remains isolated on `codex/openvino-gate1` and was not
 merged into production Handy. Gate 1 proved full Whisper Large V3 INT8 runs
 correctly and faster than real time on the Lunar Lake NPU. Gate 2 rejected the
-production route because its best correct sustained warm RSS was approximately
-4.50 GiB, above the user-approved 2.5 GiB limit. Cold compilation peaked around
-6.6-7.3 GiB and took roughly 2.5 minutes.
+production route prematurely because its best correct sustained warm RSS was
+approximately 4.50 GiB. That decision incorrectly treated a reported Windows
+observation as a user-defined limit. It was not a requirement. Cold compilation
+peaked around 6.6-7.3 GiB and took roughly 2.5 minutes.
 
 Tests covered OpenVINO 2026.2 and 2026.3, native and compatibility allocation
 paths, both speech APIs, allocator trimming, NPU cache/weight properties, and
 the historical stateless export route. Repeated transcription was stable and
-did not leak, but no configuration met the memory budget. Do not merge or
-package the worker without a materially different runtime/driver/model and a
-new memory gate.
+did not leak. Production integration remains unstarted and requires a normal
+product decision that weighs the measured Linux footprint, cold-load time,
+package size, and NPU performance; there is no user-defined memory gate.
 
 All experiment-only models, runtimes, archives, audio, reports, caches, build
 trees, generated binaries, sockets, and the invalid hybrid model in desktop
