@@ -1,5 +1,29 @@
 # Handy Pop!\_OS Handover
 
+## OpenVINO NPU feasibility outcome (2026-08-13)
+
+The Linux OpenVINO work remains isolated on `codex/openvino-gate1` and was not
+merged into production Handy. Gate 1 proved full Whisper Large V3 INT8 runs
+correctly and faster than real time on the Lunar Lake NPU. Gate 2 rejected the
+production route because its best correct sustained warm RSS was approximately
+4.50 GiB, above the user-approved 2.5 GiB limit. Cold compilation peaked around
+6.6-7.3 GiB and took roughly 2.5 minutes.
+
+Tests covered OpenVINO 2026.2 and 2026.3, native and compatibility allocation
+paths, both speech APIs, allocator trimming, NPU cache/weight properties, and
+the historical stateless export route. Repeated transcription was stable and
+did not leak, but no configuration met the memory budget. Do not merge or
+package the worker without a materially different runtime/driver/model and a
+new memory gate.
+
+All experiment-only models, runtimes, archives, audio, reports, caches, build
+trees, generated binaries, sockets, and the invalid hybrid model in desktop
+trash were removed after durable results were recorded. Approximately 9.6 GB
+was reclaimed in total (8.1 GB from the worktree plus 1.5 GB from trash). No
+production source, installed package, user model directory, or backup was
+changed. See `docs/openvino-npu-linux-design.md` and
+`experiments/openvino-gate2/GATE2_RESULTS.md`.
+
 Last verified: 2026-08-10 (Asia/Karachi)
 
 ## Purpose

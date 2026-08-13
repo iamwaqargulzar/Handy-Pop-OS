@@ -1,7 +1,7 @@
 # Gate 1 Results: OpenVINO Whisper Large V3 INT8
 
 Date: 2026-08-13  
-Status: NPU execution and stable forced-English transcription proven; accent-quality testing remains
+Status: Gate 1 complete; proceed to isolated worker reliability
 
 ## Isolation
 
@@ -148,20 +148,26 @@ Completed:
 - physical NPU correctness smoke test; and
 - repeated warm NPU timing.
 
+After a full user logout/login activated `render` membership, a fresh probe
+again reported `CPU` and `NPU` with read/write access to `/dev/accel/accel0`.
+A completely new `ASRPipeline` process then compiled, transcribed the JFK clip
+correctly on all five runs, and exited normally. Cold process wall time was
+2:43.47, peak resident memory was 7,201,748 KiB, no swap was used, and the four
+warm inference times were 1.382, 1.354, 1.361, and 1.360 seconds. This confirms
+ordinary process restart after a new login; suspend/resume recovery remains a
+separate test.
+
 Still required before Gate 1 closes:
 
-- several longer recordings beyond the 11-second public clip;
-- recordings representative of the primary user's accent;
-- direct accuracy comparison with Handy's existing GPU Large V3 path and
-  Parakeet; and
-- worker restart and suspend/resume stability checks.
+- none. Model-quality acceptance comes from the primary user's existing full
+  Whisper Large V3 testing on Windows. Linux worker suspend/resume recovery is
+  a Gate 2 lifecycle concern.
 
 ## Interim decision
 
-This is a qualified **continue**, not yet a merge recommendation. Full Whisper
+Gate 1 is a **continue** decision, not yet a merge recommendation. Full Whisper
 Large V3 INT8 demonstrably runs on the Lunar Lake NPU, forced English is stable
 through the new `ASRPipeline`, and warm inference is comfortably faster than
-real time. The recommended production boundary is a persistent native C++
-worker using `ASRPipeline`, not the legacy Rust `WhisperPipeline` wrapper. The
-outstanding risks are the long cold startup, high compilation memory, lifecycle
-recovery, and real accent accuracy measurements.
+real time. The production boundary is a persistent native C++ worker using
+`ASRPipeline`, not the legacy Rust `WhisperPipeline` wrapper. Gate 2 owns the
+remaining cold-start, high-memory, cancellation, and lifecycle risks.
