@@ -48,6 +48,7 @@
         "depends": [
           "libgtk-layer-shell0",
           "libopenblas0",
+          "ocl-icd-libopencl1",
           "pipewire-bin",
           "pulseaudio-utils",
           "wireplumber"

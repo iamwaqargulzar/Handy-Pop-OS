@@ -36,6 +36,8 @@ pub enum EngineType {
     GigaAM,
     Canary,
     Cohere,
+    #[cfg(target_os = "linux")]
+    OpenVinoNpu,
 }
 
 /// Where a model comes from and how Handy obtains it — the routing discriminant
@@ -52,6 +54,10 @@ pub enum ModelSource {
     /// HF cache (so other tools reuse it). The file within the repo is
     /// [`ModelInfo::filename`].
     HuggingFace { repo_id: String, revision: String },
+    /// A pinned multi-file OpenVINO IR snapshot. Unlike GGUF catalog entries,
+    /// this resolves to a directory consumed by the isolated NPU worker.
+    #[cfg(target_os = "linux")]
+    OpenVinoSnapshot { repo_id: String, revision: String },
     /// Already present on disk — a user-provided custom model, or one discovered
     /// in a shared cache. Nothing to download.
     Local,
@@ -669,6 +675,39 @@ impl ModelManager {
                 supports_language_detection: true,
             },
         );
+
+        #[cfg(target_os = "linux")]
+        if super::openvino_npu::probe_available() {
+            available_models.insert(
+                "openvino-whisper-large-v3-int8".to_string(),
+                ModelInfo {
+                    id: "openvino-whisper-large-v3-int8".to_string(),
+                    name: "Whisper Large V3 (Intel NPU)".to_string(),
+                    description: "Full Whisper Large V3 INT8 accelerated by OpenVINO on Intel NPU."
+                        .to_string(),
+                    filename: "openvino-whisper-large-v3-int8".to_string(),
+                    source: ModelSource::OpenVinoSnapshot {
+                        repo_id: "OpenVINO/whisper-large-v3-int8-ov".to_string(),
+                        revision: "a888a75cc8b494a8a45400fd85f6bfa379ba3955".to_string(),
+                    },
+                    size_mb: 1490,
+                    is_downloaded: false,
+                    is_downloading: false,
+                    partial_size: 0,
+                    is_directory: true,
+                    engine_type: EngineType::OpenVinoNpu,
+                    accuracy_score: 1.0,
+                    speed_score: 0.95,
+                    supports_translation: true,
+                    is_recommended: false,
+                    supported_languages: whisper_languages.clone(),
+                    supports_language_selection: true,
+                    is_custom: false,
+                    supports_streaming: false,
+                    supports_language_detection: true,
+                },
+            );
+        }
 
         available_models.insert(
             "breeze-asr".to_string(),
@@ -2166,6 +2205,12 @@ impl ModelManager {
                     .download_hf_model(&model_info, repo_id.clone(), revision.clone())
                     .await;
             }
+            #[cfg(target_os = "linux")]
+            ModelSource::OpenVinoSnapshot { repo_id, revision } => {
+                return self
+                    .download_openvino_snapshot(&model_info, repo_id, revision)
+                    .await;
+            }
             ModelSource::Local => {
                 return Err(anyhow::anyhow!("No download source for model"));
             }
@@ -2348,6 +2393,102 @@ impl ModelManager {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    async fn download_openvino_snapshot(
+        &self,
+        model_info: &ModelInfo,
+        repo_id: &str,
+        revision: &str,
+    ) -> Result<()> {
+        const FILES: &[(&str, Option<&str>)] = &[
+            ("added_tokens.json", None),
+            ("config.json", None),
+            ("generation_config.json", None),
+            ("merges.txt", None),
+            ("normalizer.json", None),
+            ("openvino_config.json", None),
+            (
+                "openvino_decoder_model.bin",
+                Some("fdf13685d5a9c427b9aa5893c2baef362f1e4dddfbf5bf8a47fc03acb35a45ea"),
+            ),
+            ("openvino_decoder_model.xml", None),
+            (
+                "openvino_detokenizer.bin",
+                Some("f2b3c47825a1089525ff65c0c8e49271e1dee69a401a04fc827ac2de5b7766e4"),
+            ),
+            ("openvino_detokenizer.xml", None),
+            (
+                "openvino_encoder_model.bin",
+                Some("fffcbf47a4cfd5a1e3f57c0569f5ef706245b798ef626db5ffea7b84166ed865"),
+            ),
+            ("openvino_encoder_model.xml", None),
+            (
+                "openvino_tokenizer.bin",
+                Some("adfa3d9a2920d0f314121270a960ab331ec0f05838544bb8ecaaa422282a6fd4"),
+            ),
+            ("openvino_tokenizer.xml", None),
+            ("preprocessor_config.json", None),
+            ("special_tokens_map.json", None),
+            ("tokenizer.json", None),
+            ("tokenizer_config.json", None),
+            ("vocab.json", None),
+        ];
+
+        let model_id = model_info.id.clone();
+        let final_dir = self.models_dir.join(&model_info.filename);
+        let partial_dir = self
+            .models_dir
+            .join(format!("{}.partial", model_info.filename));
+        if final_dir.is_dir() {
+            self.update_download_status()?;
+            return Ok(());
+        }
+        fs::create_dir_all(&partial_dir)?;
+
+        let cancel_token = CancellationToken::new();
+        self.cancel_flags
+            .lock()
+            .unwrap()
+            .insert(model_id.clone(), cancel_token.clone());
+        if let Some(model) = self.available_models.lock().unwrap().get_mut(&model_id) {
+            model.is_downloading = true;
+        }
+        let mut cleanup = DownloadCleanup {
+            available_models: &self.available_models,
+            cancel_flags: &self.cancel_flags,
+            model_id: model_id.clone(),
+            disarmed: false,
+        };
+
+        for (filename, sha256) in FILES {
+            let destination = partial_dir.join(filename);
+            // Files reach this final name only after the resumable downloader
+            // completes and (for large blobs) verifies the published hash.
+            if destination.is_file() {
+                continue;
+            }
+            let download = partial_dir.join(format!("{filename}.download"));
+            let url = format!("https://huggingface.co/{repo_id}/resolve/{revision}/{filename}");
+            match self
+                .download_http_resumable(&model_id, &url, &download, None, *sha256, &cancel_token)
+                .await?
+            {
+                HttpDownloadOutcome::Cancelled => return Ok(()),
+                HttpDownloadOutcome::Completed => fs::rename(download, destination)?,
+            }
+        }
+
+        if final_dir.exists() {
+            fs::remove_dir_all(&final_dir)?;
+        }
+        fs::rename(&partial_dir, &final_dir)?;
+        cleanup.disarmed = true;
+        self.cancel_flags.lock().unwrap().remove(&model_id);
+        self.update_download_status()?;
+        let _ = self.app_handle.emit("model-download-complete", &model_id);
+        Ok(())
+    }
+
     pub fn delete_model(&self, model_id: &str) -> Result<()> {
         debug!("ModelManager: delete_model called for: {}", model_id);
 
@@ -2443,7 +2584,11 @@ impl ModelManager {
         // Delete partial file if it exists (same for both types)
         if partial_path.exists() {
             info!("Deleting partial file at: {:?}", partial_path);
-            fs::remove_file(&partial_path)?;
+            if partial_path.is_dir() {
+                fs::remove_dir_all(&partial_path)?;
+            } else {
+                fs::remove_file(&partial_path)?;
+            }
             info!("Partial file deleted successfully");
             deleted_something = true;
         }

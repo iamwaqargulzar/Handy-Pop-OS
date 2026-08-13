@@ -1,6 +1,8 @@
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
+#[cfg(target_os = "linux")]
+use crate::managers::openvino_npu::OpenVinoNpuEngine;
 use crate::settings::{
     get_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
     TranscribeAcceleratorSetting,
@@ -178,6 +180,8 @@ enum LoadedEngine {
     GigaAM(GigaAMModel),
     Canary(CanaryModel),
     Cohere(CohereModel),
+    #[cfg(target_os = "linux")]
+    OpenVinoNpu(OpenVinoNpuEngine),
 }
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
@@ -669,6 +673,16 @@ impl TranscriptionManager {
                 })?;
                 LoadedEngine::Cohere(engine)
             }
+            #[cfg(target_os = "linux")]
+            EngineType::OpenVinoNpu => {
+                let engine = OpenVinoNpuEngine::load(&model_path).map_err(|error| {
+                    let error_msg =
+                        format!("Failed to load OpenVINO NPU model {}: {}", model_id, error);
+                    emit_loading_failed(&error_msg);
+                    anyhow::anyhow!(error_msg)
+                })?;
+                LoadedEngine::OpenVinoNpu(engine)
+            }
         };
 
         // Update the current engine and model ID
@@ -749,6 +763,8 @@ impl TranscriptionManager {
             Some(LoadedEngine::TranscribeCpp(session)) => {
                 Some(session.model().backend().to_string())
             }
+            #[cfg(target_os = "linux")]
+            Some(LoadedEngine::OpenVinoNpu(_)) => Some("openvino-npu".to_string()),
             Some(_) => Some("onnx".to_string()),
             None => None,
         }
@@ -1354,6 +1370,10 @@ impl TranscriptionManager {
                             .map(|r| r.text)
                             .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                     }
+                    #[cfg(target_os = "linux")]
+                    LoadedEngine::OpenVinoNpu(openvino_engine) => openvino_engine
+                        .transcribe(&audio, &validated_language, settings.translate_to_english)
+                        .map_err(|e| anyhow::anyhow!("OpenVINO NPU transcription failed: {}", e)),
                 }
             }));
 

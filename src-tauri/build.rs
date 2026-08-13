@@ -25,6 +25,10 @@ fn main() {
     // static macOS `metal` build, where there is nothing to ship.
     stage_transcribe_runtime_libs();
 
+    // Linux packages the optional Intel NPU worker and its private, pinned
+    // OpenVINO runtime beside the existing app-private native libraries.
+    stage_openvino_npu_runtime();
+
     // When ORT is dynamically linked (Windows CI sets ORT_LIB_LOCATION +
     // ORT_PREFER_DYNAMIC_LINK to a baseline ONNX Runtime), ship its onnxruntime.dll
     // next to Handy.exe so the app loads our baseline build instead of statically
@@ -35,6 +39,117 @@ fn main() {
     stage_vc_runtime_dlls();
 
     tauri_build::build()
+}
+
+/// Build and stage the isolated OpenVINO 2026.3 Intel NPU worker.
+///
+/// The build inputs are explicit so normal Handy builds remain possible without
+/// a system-wide OpenVINO SDK. Release builds set all three variables to
+/// verified extracted artifacts. Only the tested runtime closure is copied;
+/// headers, CMake metadata, samples, Python, CPU/GPU plugins, and tools are not
+/// shipped.
+fn stage_openvino_npu_runtime() {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    for variable in [
+        "HANDY_OPENVINO_GENAI_ROOT",
+        "HANDY_NPU_LEVEL_ZERO_LIB",
+        "HANDY_LEVEL_ZERO_LOADER_LIB",
+    ] {
+        println!("cargo:rerun-if-env-changed={variable}");
+    }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        return;
+    }
+    let Some(root) = std::env::var_os("HANDY_OPENVINO_GENAI_ROOT").map(PathBuf::from) else {
+        println!(
+            "cargo:warning=OpenVINO NPU runtime not staged (HANDY_OPENVINO_GENAI_ROOT is unset)"
+        );
+        return;
+    };
+    let npu_level_zero = PathBuf::from(
+        std::env::var_os("HANDY_NPU_LEVEL_ZERO_LIB")
+            .expect("HANDY_NPU_LEVEL_ZERO_LIB is required with HANDY_OPENVINO_GENAI_ROOT"),
+    );
+    let level_zero_loader = PathBuf::from(
+        std::env::var_os("HANDY_LEVEL_ZERO_LOADER_LIB")
+            .expect("HANDY_LEVEL_ZERO_LOADER_LIB is required with HANDY_OPENVINO_GENAI_ROOT"),
+    );
+
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let source = manifest.join("openvino-worker/main.cpp");
+    let runtime_lib = root.join("runtime/lib/intel64");
+    let tbb_lib = root.join("runtime/3rdparty/tbb/lib");
+    let nlohmann = root.join("samples/cpp/thirdparty/nlohmann_json/single_include");
+    let destination = manifest.join("transcribe-libs");
+    let private_lib = destination.join("openvino");
+    std::fs::create_dir_all(&private_lib).expect("create OpenVINO staging directory");
+
+    let worker = destination.join("handy-openvino-npu");
+    let status = Command::new("g++")
+        .args(["-std=c++17", "-O2", "-DNDEBUG"])
+        .arg(&source)
+        .arg(format!("-I{}", root.join("runtime/include").display()))
+        .arg(format!("-I{}", nlohmann.display()))
+        .arg(format!("-L{}", runtime_lib.display()))
+        .arg(format!("-L{}", tbb_lib.display()))
+        .arg("-Wl,-rpath,$ORIGIN/openvino")
+        .arg(format!("-Wl,-rpath-link,{}", tbb_lib.display()))
+        .args(["-lopenvino_genai", "-lopenvino", "-ltbb", "-pthread", "-o"])
+        .arg(&worker)
+        .status()
+        .expect("run g++ for OpenVINO worker");
+    assert!(status.success(), "failed to compile OpenVINO NPU worker");
+
+    let files = [
+        ("libopenvino.so.2026.3.0", "libopenvino.so.2630"),
+        (
+            "libopenvino_genai.so.2026.3.0.0",
+            "libopenvino_genai.so.2630",
+        ),
+        ("libopenvino_tokenizers.so", "libopenvino_tokenizers.so"),
+        (
+            "libopenvino_ir_frontend.so.2026.3.0",
+            "libopenvino_ir_frontend.so.2630",
+        ),
+        (
+            "libopenvino_intel_npu_plugin.so",
+            "libopenvino_intel_npu_plugin.so",
+        ),
+        (
+            "libopenvino_intel_npu_compiler.so",
+            "libopenvino_intel_npu_compiler.so",
+        ),
+        (
+            "libopenvino_intel_npu_compiler_loader.so",
+            "libopenvino_intel_npu_compiler_loader.so",
+        ),
+        (
+            "libopenvino_intel_npu_vm_runtime.so",
+            "libopenvino_intel_npu_vm_runtime.so",
+        ),
+    ];
+    for (source_name, installed_name) in files {
+        copy_file(
+            &runtime_lib.join(source_name),
+            &private_lib.join(installed_name),
+        );
+    }
+    copy_file(
+        &tbb_lib.join("libtbb.so.12.13"),
+        &private_lib.join("libtbb.so.12"),
+    );
+    copy_file(&npu_level_zero, &private_lib.join("libze_intel_npu.so.1"));
+    copy_file(&level_zero_loader, &private_lib.join("libze_loader.so.1"));
+
+    fn copy_file(source: &Path, destination: &Path) {
+        std::fs::copy(source, destination)
+            .unwrap_or_else(|error| panic!("copy {}: {error}", source.display()));
+    }
+
+    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:warning=Staged lean OpenVINO 2026.3 Intel NPU runtime");
 }
 
 /// Stage the MSVC runtime DLLs into `transcribe-libs/` for app-local deployment.
