@@ -40,6 +40,13 @@ outside the measured inference path.
 Language arguments such as `en` are normalized to Whisper control tokens such
 as `<|en|>`. Pass `--language auto` to use model language detection.
 
+The Rust harness exercises the legacy OpenVINO GenAI Whisper C API and remains
+useful for detection and diagnostic benchmarking. Gate 1 found that production
+should instead use OpenVINO 2026.3's native C++ `ASRPipeline`: it supports
+stable forced-English transcription on this model, while automatic language
+detection in the legacy wrapper drifted on repeated longer input. Keep one
+pipeline alive, enable segment timestamps, and disable word timestamps.
+
 For OpenVINO 2026.3 on the tested Lunar Lake Linux stack, export
 `DISABLE_OPENVINO_GENAI_NPU_L0=1` before loading Large V3. Without it, the
 pipeline compiled but failed during the first generation. This environment

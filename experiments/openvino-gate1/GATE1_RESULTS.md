@@ -1,7 +1,7 @@
 # Gate 1 Results: OpenVINO Whisper Large V3 INT8
 
 Date: 2026-08-13  
-Status: NPU execution proven; accent-quality and cache-startup testing remain
+Status: NPU execution and stable forced-English transcription proven; accent-quality testing remains
 
 ## Isolation
 
@@ -95,11 +95,29 @@ OpenVINO logged a minor Level Zero API mismatch: plugin API 1.16 versus driver
 API 1.15. It continued successfully with graph extension 1.18. This combination
 must be pinned and tested as a unit rather than mixing arbitrary versions.
 
-Forcing a known language exposed another difference: the current Rust wrapper
-failed when English was forced, while automatic detection succeeded and the
-official reference sample succeeded. The final worker should initially use
-automatic language detection. Explicit language selection requires a focused
-upstream/API investigation before release.
+The legacy Rust `WhisperPipeline` wrapper failed when English was forced.
+Automatic language detection worked on the short Intel clip, but was unstable
+on the 11-second JFK clip: the first run returned correct English while later
+runs drifted to Norwegian and translation-like output.
+
+OpenVINO 2026.3's newer C++ `ASRPipeline` solved that problem. With language
+forced to `<|en|>`, task `transcribe`, segment timestamps enabled, and word
+timestamps disabled, five consecutive runs returned the same correct English
+transcript:
+
+```text
+And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+```
+
+The first inference took 2.018 seconds. The next four took 1.366, 1.374, 1.385,
+and 1.378 seconds, giving a warm median of 1.376 seconds for approximately 11
+seconds of audio (real-time factor 0.125, or about 8x real time). End-to-end
+wall time including cold compilation and all five inferences was 167.46 seconds;
+peak resident memory was 7,202,780 KiB (approximately 6.87 GiB).
+
+Word-level timestamps caused an additional large graph compilation and did not
+finish within eight minutes. Handy does not require them for transcription, so
+the production worker should leave them disabled and retain segment timestamps.
 
 ## Compiled-cache investigation
 
@@ -111,11 +129,12 @@ Rust bindings can pass them, so production has three options:
 2. wrap the low-level C constructor locally; or
 3. use the official C++ `ASRPipeline` inside the isolated worker.
 
-An initial C++ cache creation produced approximately 1.3 GB of compiled graph
-artifacts. Its timing run was invalidated when two test sessions accidentally
-overlapped, causing memory pressure and swap activity; both were terminated
-without affecting Handy. Cache startup timing must be rerun serially after the
-system has reclaimed swap. No performance conclusion is drawn from that run.
+A clean serial C++ cache creation produced one approximately 1.37 GB compiled
+blob but still had not completed after ten minutes, so it was terminated.
+Interactive cache creation is therefore not viable on this hardware as-is.
+Production should keep one native worker and pipeline alive; any compiled-cache
+optimization must happen explicitly in the background after model download and
+needs a separate bounded experiment.
 
 ## Gate status
 
@@ -131,17 +150,18 @@ Completed:
 
 Still required before Gate 1 closes:
 
-- serial compiled-cache creation and cached startup timing;
-- several longer recordings rather than a 2.46-second reference clip;
+- several longer recordings beyond the 11-second public clip;
 - recordings representative of the primary user's accent;
 - direct accuracy comparison with Handy's existing GPU Large V3 path and
   Parakeet; and
-- repeated-process and suspend/resume stability checks.
+- worker restart and suspend/resume stability checks.
 
 ## Interim decision
 
 This is a qualified **continue**, not yet a merge recommendation. Full Whisper
-Large V3 INT8 demonstrably runs on the Lunar Lake NPU and warm inference is
-comfortably faster than real time. The outstanding risks are cold/cached model
-startup, high compilation memory, explicit-language behavior, and real accent
-accuracy measurements.
+Large V3 INT8 demonstrably runs on the Lunar Lake NPU, forced English is stable
+through the new `ASRPipeline`, and warm inference is comfortably faster than
+real time. The recommended production boundary is a persistent native C++
+worker using `ASRPipeline`, not the legacy Rust `WhisperPipeline` wrapper. The
+outstanding risks are the long cold startup, high compilation memory, lifecycle
+recovery, and real accent accuracy measurements.
