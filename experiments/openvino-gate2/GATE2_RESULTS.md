@@ -2,13 +2,13 @@
 
 Date: 2026-08-13
 
-Status: OpenVINO 2026.3 ASRPipeline selected; integration work pending
+Status: selected pipeline integrated and package-level transcription verified
 
 ## Isolation
 
-The prototype remains entirely under `experiments/openvino-gate2` on the
-separate `codex/openvino-gate1` worktree. No production Handy source, installed
-package, settings, model catalogue, or user model directory was changed.
+The work remains on the separate `codex/openvino-gate1` worktree. Production
+integration is now present on that isolated branch, but no installed package,
+production branch, user settings, or user model directory was changed.
 
 The OpenVINO libraries are loaded only by `handy-openvino-npu`, never by the
 main Handy process. Complete removal and artifact cleanup are specified in
@@ -74,8 +74,28 @@ The prototype is stable, does not leak across repeated transcriptions, and uses
 approximately 4.51 GiB warm RSS. This is a measured implementation tradeoff,
 not a failed user requirement. OpenVINO 2026.3 C++ `ASRPipeline` is the selected
 forward path because it is the current API and reliably honored the explicit
-language setting in testing. Production integration remains unstarted until
-the remaining reliability and packaging gates are completed.
+language setting in testing. Production integration was subsequently completed
+on the isolated branch and verified from the generated Debian payload below.
+
+## Integrated Debian payload verification
+
+The first lean payload enumerated `NPU` but failed model initialization because
+ASRPipeline also requires the OpenVINO CPU plug-in. The packaging closure was
+corrected to include that private plug-in. This does not change model execution:
+the worker constructs `ASRPipeline(model, "NPU")` and reports the actual device.
+
+Final extracted-package test:
+
+| Check | Result |
+| --- | --- |
+| Runtime devices | `CPU`, `NPU` |
+| Requested and reported model device | `NPU` |
+| Cold load | 166.769 s |
+| First 11-second JFK transcription | correct, 2.355 s |
+| Second warm transcription | correct, 1.405 s |
+| Unload and shutdown | passed; worker and socket absent |
+| Debian size | 123 MiB compressed; 352,174 KiB installed |
+| Debian SHA-256 | `c58d4b0dd71bd06aaf983ca95bd2eb222b47185fd9f10196d12e5e4f4115a356` |
 
 ## Memory-reduction experiments
 
@@ -111,10 +131,9 @@ runs do not leak and unload returns the worker to roughly 449 MiB, but loading
 again costs approximately 2.5 minutes. An unload-after-every-transcription
 workaround is therefore not a usable product design.
 
-The full Large V3 OpenVINO route remains a technically viable candidate with a
-substantial measured memory and cold-load cost. Do not merge the experimental
-worker merely on the strength of feasibility results; complete the remaining
-reliability and packaging gates before production integration.
+The full Large V3 OpenVINO route remains technically viable with a substantial
+measured memory and cold-load cost. Integration is kept on the isolated branch
+until the remaining fault-injection and clean-machine checks are complete.
 
 ## Reliability tests still pending
 
@@ -124,4 +143,5 @@ reliability and packaging gates before production integration.
 - worker termination during load and inference;
 - repeated load/unload cycles;
 - runtime/driver failure classification; and
-- suspend/resume recovery.
+- suspend/resume recovery; and
+- clean-machine conventional-engine regression testing with and without an NPU.

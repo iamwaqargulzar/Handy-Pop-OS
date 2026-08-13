@@ -1,8 +1,9 @@
 # Handy — Pop!\_OS Build and Deployment Guide
 
 This guide covers the current Handy `0.9.5` source tree on Pop!\_OS 24.04 and
-other Ubuntu/Debian-based distributions. The retired Windows-only Intel NPU
-experiment is not part of this Linux build.
+other Ubuntu/Debian-based distributions. The retired Windows Python/HTTP NPU
+experiment is not part of this Linux build; it is replaced by an isolated
+native Linux OpenVINO worker.
 
 Tracked Windows source and installer configuration may remain in the
 repository. Rust and Tauri select platform-specific code at build time, so
@@ -16,6 +17,7 @@ between operating systems.
 The Linux build retains:
 
 - Local transcription with CPU and Vulkan backends
+- Conditional full Whisper Large V3 INT8 transcription on supported Intel NPUs
 - Three-level post-processing model fallback
 - Per-provider reasoning-effort settings
 - Global hotkeys for switching downloaded models
@@ -54,8 +56,9 @@ Handy runtime libraries belong in the private `/usr/lib/Handy/` directory.
 
 The generated Debian package contains the complete customized application,
 including the Linux overlay and tray changes, frontend resources, VAD model,
-and Handy's private transcription runtime libraries. Speech-recognition
-models selected by the user are downloaded separately on first use.
+and Handy's private conventional and OpenVINO transcription runtimes. The
+roughly 1.57 GB OpenVINO model is not bundled; it appears only when the private
+worker detects an NPU and is downloaded on user request.
 
 Install the package with APT so its declared runtime dependencies are resolved:
 
@@ -80,8 +83,9 @@ dpkg-query -W -f='${Status} ${Version}\n' handy
 
 The package does not silently change group membership. On a fresh machine,
 package installation and the `input` group command are therefore the only
-required system-level setup beyond normal Pop!\_OS graphics drivers. Development
-dependencies in the next section are needed only when building from source.
+required system-level setup beyond normal Pop!\_OS graphics/NPU kernel support.
+Development dependencies in the next section are needed only when building
+from source.
 
 ## Install prerequisites
 
@@ -105,6 +109,7 @@ sudo apt install -y \
   libgtk-layer-shell0 \
   libgtk-layer-shell-dev \
   libopenblas-dev \
+  ocl-icd-libopencl1 \
   pipewire-bin \
   pulseaudio-utils \
   wireplumber \
@@ -166,6 +171,27 @@ bun run build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+## OpenVINO NPU build inputs
+
+The Linux package uses OpenVINO Runtime 2026.3.0, OpenVINO GenAI 2026.3.0.0,
+Intel NPU user-mode driver 1.35.0, and Level Zero loader 1.32.0. These are build
+inputs, not global development dependencies on the destination machine. Keep
+their extracted trees outside the repository and provide these paths:
+
+```bash
+export HANDY_OPENVINO_GENAI_ROOT=/path/to/openvino_genai_ubuntu24_2026.3.0.0_x86_64
+export HANDY_NPU_LEVEL_ZERO_LIB=/path/to/libze_intel_npu.so.1.35.0
+export HANDY_LEVEL_ZERO_LOADER_LIB=/path/to/libze_loader.so.1.32.0
+```
+
+`HANDY_OPENVINO_GENAI_ROOT` must contain `runtime/include`,
+`runtime/lib/intel64`, and `runtime/3rdparty/tbb/lib`. The build copies only the
+recorded runtime closure, including the NPU and CPU plug-ins required by
+ASRPipeline. It does not package headers, CMake files, Python, samples, tools,
+the GPU plug-in, or model weights. If these variables are intentionally unset,
+the conventional Handy package remains buildable and the NPU catalogue stays
+hidden.
+
 ## Build the Pop!\_OS package
 
 Build only the Debian bundle:
@@ -183,6 +209,22 @@ src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
 The repository contains the public updater key used for official releases.
 Local builds without the matching private key must pass `--no-sign`. Linux
 does not need the Windows short `CARGO_TARGET_DIR` workaround.
+
+The verified NPU-enabled artifact is 123 MiB compressed, declares 352,174 KiB
+installed, and has SHA-256
+`c58d4b0dd71bd06aaf983ca95bd2eb222b47185fd9f10196d12e5e4f4115a356`.
+
+## Intel NPU runtime behavior
+
+Handy starts `/usr/lib/Handy/handy-openvino-npu` with its private libraries and
+`DISABLE_OPENVINO_GENAI_NPU_L0=1`. It shows the OpenVINO model only when the
+worker enumerates `NPU`. The worker may also enumerate `CPU` because
+ASRPipeline needs the CPU plug-in during initialization, but model creation is
+explicitly `ASRPipeline(..., "NPU")`; it never labels a CPU/GPU fallback as NPU.
+
+The first model load compiles the graph and can take roughly 2.5 minutes. The
+verified extracted-package run loaded in 166.769 seconds and transcribed the
+11-second JFK sample in 2.355 seconds on its first run and 1.405 seconds warm.
 
 ## Install or inspect the package
 

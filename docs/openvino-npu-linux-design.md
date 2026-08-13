@@ -1,6 +1,6 @@
 # OpenVINO NPU Integration for Handy Pop!_OS
 
-Status: OpenVINO 2026.3 ASRPipeline selected; remaining gates pending
+Status: integrated on isolated branch; package-level NPU transcription verified
 
 Last updated: 2026-08-13
 
@@ -99,7 +99,8 @@ isolated NPU files and feature registration are removed.
 - `load_model`: validate and load one OpenVINO model on `NPU`;
 - `transcribe`: consume normalized f32 audio and return text, segment
   timestamps, timings, and actual device;
-- `cancel`: cancel when supported, otherwise let Handy restart the worker;
+- cancellation: Handy may terminate and restart the isolated worker when the
+  runtime cannot cancel an active request;
 - `unload_model`: release pipeline/device memory;
 - `status`: readiness, active model/device, busy state, and last error; and
 - `shutdown`: clean termination.
@@ -147,13 +148,14 @@ deletion behavior. Deletion invalidates only that model's cache.
 Ship the pinned runtime closure only: no model weights, Python, headers, CMake
 metadata, compilers, samples, benchmarks, or debug symbols. Gate 1 required a
 private OpenVINO GenAI 2026.3 runtime, Intel NPU user-mode driver 1.35.0, Level
-Zero loader 1.28.2, the distribution `intel_vpu` kernel driver, and `render`
+Zero loader 1.32.0, the distribution `intel_vpu` kernel driver, and `render`
 group access. The tested compatibility setting was
 `DISABLE_OPENVINO_GENAI_NPU_L0=1`.
 
-The current package is approximately 47.5 MB compressed and 127 MB installed.
-The responsible enhanced target remains about 80-105 MB compressed and
-250-350 MB installed, excluding the roughly 1.57 GB on-demand model.
+The verified package is 123 MiB compressed and declares 352,174 KiB installed,
+excluding the roughly 1.57 GB on-demand model. This includes the CPU plug-in
+needed by ASRPipeline initialization, but the model is compiled explicitly for
+NPU and there is no silent CPU/GPU transcription fallback.
 
 ## Fallback policy
 
@@ -174,7 +176,7 @@ files, correct full Large V3 INT8 execution, stable forced English through
 `ASRPipeline`, repeatable warm timing, and clean process restart. See
 `experiments/openvino-gate1/GATE1_RESULTS.md`.
 
-### Gate 2 — memory research complete; reliability work pending
+### Gate 2 — memory and core worker reliability complete
 
 Test framing and malformed requests, cancellation/restart, corrupt models,
 driver/runtime failure, suspend/resume, repeated load/unload, concurrent
@@ -193,17 +195,23 @@ path. Repeated inference was stable without measurable per-transcription
 growth. These measurements inform the product tradeoff but do not reject the
 integration. Detailed evidence is in `experiments/openvino-gate2/GATE2_RESULTS.md`.
 
-### Gate 3: model UI integration
+### Gate 3 — core model integration complete; interactive UI QA pending
 
-Verify conditional visibility, download/checksum flow, selection, model
-hotkeys, CLI switching, deletion/cache cleanup, localization, and honest device
-reporting.
+Implemented conditional catalogue visibility, pinned multi-file downloads and
+checksums, selection, deletion, language/task forwarding, and honest backend
+reporting. The extracted package's `--list-models` path exposed the NPU model
+only after a successful packaged-worker probe. Interactive Settings UI,
+hotkey, and CLI switching remain final installed-package QA items.
 
-### Gate 4: clean-system package
+### Gate 4 — Debian payload test complete; clean-machine QA pending
 
-Build one `.deb`, inspect runtime closure/licences, and test clean Pop!_OS
-systems with and without a supported NPU. Conventional transcription must keep
-working without NPU support.
+One `.deb` was built and its extracted private runtime was inspected with no
+unresolved dynamic dependencies. From that payload, NPU probe, cold model
+load, two correct transcriptions, unload, shutdown, and socket cleanup passed.
+The final artifact SHA-256 is
+`c58d4b0dd71bd06aaf983ca95bd2eb222b47185fd9f10196d12e5e4f4115a356`.
+Clean Pop!_OS testing with and without a supported NPU remains pending;
+conventional transcription must remain usable on both.
 
 ## Non-goals for the first release
 

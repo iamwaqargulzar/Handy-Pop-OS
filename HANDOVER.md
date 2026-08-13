@@ -1,21 +1,29 @@
 # Handy Pop!\_OS Handover
 
-## OpenVINO NPU feasibility outcome (2026-08-13)
+## OpenVINO NPU integration outcome (2026-08-13)
 
-The Linux OpenVINO work remains isolated on `codex/openvino-gate1` and was not
-merged into production Handy. Gate 1 proved full Whisper Large V3 INT8 runs
-correctly and faster than real time on the Lunar Lake NPU. Gate 2 rejected the
-production route prematurely because its best correct sustained warm RSS was
-approximately 4.50 GiB. That decision incorrectly treated a reported Windows
-observation as a user-defined limit. It was not a requirement. Cold compilation
-peaked around 6.6-7.3 GiB and took roughly 2.5 minutes.
+The Linux OpenVINO work remains isolated on `codex/openvino-gate1` and has not
+been merged into the installed production branch. Full Whisper Large V3 INT8
+now runs through a worker integrated with Handy and faster than real time on
+the Lunar Lake NPU. The best measured sustained warm worker RSS is about
+4.50 GiB. Cold compilation peaked around 6.6-7.3 GiB and took roughly 2.5
+minutes.
 
 Tests covered OpenVINO 2026.2 and 2026.3, native and compatibility allocation
 paths, both speech APIs, allocator trimming, NPU cache/weight properties, and
 the historical stateless export route. Repeated transcription was stable and
 did not leak. The selected integration target is the newer OpenVINO 2026.3 C++
-`ASRPipeline`; production integration remains unstarted pending the remaining
-reliability and packaging work.
+`ASRPipeline`. The model is conditionally exposed only after the packaged
+worker enumerates an NPU, downloads its pinned snapshot on demand, and is kept
+out of the main Handy process.
+
+The generated Debian package was tested from its extracted payload. It
+enumerated `CPU` and `NPU`, loaded the model explicitly on `NPU` in 166.769
+seconds, transcribed the 11-second JFK sample correctly in 2.355 seconds, and
+repeated the warm transcription in 1.405 seconds. Unload, shutdown, process
+exit, and socket removal all completed successfully. The CPU plug-in is part
+of the private runtime because `ASRPipeline` needs it during initialization;
+the speech model itself remains explicitly targeted to NPU.
 
 The selected Handy language must be passed explicitly to the NPU pipeline for
 every transcription rather than relying on automatic language detection.
@@ -23,15 +31,37 @@ Forced decoding is not assumed to suppress speech in other languages: that
 behavior requires a dedicated mixed-language validation test before any such
 claim or filtering feature is implemented.
 
-All experiment-only models, runtimes, archives, audio, reports, caches, build
-trees, generated binaries, sockets, and the invalid hybrid model in desktop
-trash were removed after durable results were recorded. Approximately 9.6 GB
-was reclaimed in total (8.1 GB from the worktree plus 1.5 GB from trash). No
-production source, installed package, user model directory, or backup was
-changed. See `docs/openvino-npu-linux-design.md` and
+Temporary package-test model, runtime extraction, sample audio, and sockets are
+removed after the final results are recorded. The built `.deb` is retained as
+the deliverable. No installed package, user model directory, production
+branch, or backup is changed by this isolated build. See
+`docs/openvino-npu-linux-design.md` and
 `experiments/openvino-gate2/GATE2_RESULTS.md`.
 
-Last verified: 2026-08-10 (Asia/Karachi)
+Isolated NPU-enabled package artifact:
+
+```text
+/home/waqar/Documents/projects/mine/Handy/.worktrees/openvino-gate1/src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb
+SHA-256: c58d4b0dd71bd06aaf983ca95bd2eb222b47185fd9f10196d12e5e4f4115a356
+```
+
+## Upstream review policy and result (2026-08-13)
+
+The upstream-only post-v0.9.5 history was reviewed before this build. Our
+Pop!_OS overlay, theme, tray, shortcut, update, and recording-volume behavior
+has priority over upstream changes. Two safe, independent fixes were adopted:
+compressed API responses (`7d2717d0`) and ydotool syntax detection
+(`6ac26648`). The upstream Wayland overlay work was not adopted because our
+native GTK/COSMIC monitor-following implementation is more complete.
+
+Two upstream changes overlap custom behavior and remain deliberately
+unapplied pending an explicit user choice: atomic tray-icon updates overlap the
+custom blue non-template tray, and upstream theme propagation overlaps the
+custom native overlay/theme path. No other reviewed change was added merely
+because it was newer; anything beneficial that conflicts with fork behavior
+must be presented before application.
+
+Last verified: 2026-08-13 (Asia/Karachi)
 
 ## Purpose
 

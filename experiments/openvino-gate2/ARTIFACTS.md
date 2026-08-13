@@ -23,7 +23,7 @@ These are intentional source or documentation and remain after cleanup:
 - `experiments/openvino-gate2/GATE2_RESULTS.md`
 - this ledger
 
-## Disposable, ignored artifacts currently present
+## Disposable experiment artifact classes
 
 | Path | Purpose | Current approximate size | Final disposition |
 | --- | --- | ---: | --- |
@@ -61,14 +61,16 @@ After deletion:
 4. build conventional Handy without the experiment artifacts; and
 5. record reclaimed disk space in the handover.
 
-The cleanup is deliberately deferred while Gate 2 needs the pinned runtime and
-model for reproducible tests. No disposable artifact is committed or packaged.
+Production packaging is rebuilt from pinned external artifacts and copies only
+the recorded private runtime closure. Disposable downloads are never committed
+or copied wholesale into the package.
 
 ## Final cleanup result
 
-Gate 2 was rejected on memory. The ignored audio, models, raw reports, runtime
-archives/extractions, Rust target directory, every Gate 2 CMake build directory,
-generated raw audio, and runtime sockets were removed from this project after
-their durable measurements were copied into `GATE1_RESULTS.md` and
-`GATE2_RESULTS.md`. No production source, user model directory, backup, or
-parent-project file was included in cleanup.
+Earlier Gate downloads were removed after their durable measurements were
+copied into `GATE1_RESULTS.md` and `GATE2_RESULTS.md`. The final package-level
+test used explicitly named `/tmp/handy-*20260813` paths for the runtime, model,
+extracted Debian payload, audio, and socket. Those temporary paths are removed
+after documentation; the generated `.deb` remains the only binary deliverable.
+No user model directory, backup, parent-project file, or installed application
+is included in cleanup.

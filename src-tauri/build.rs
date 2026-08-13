@@ -46,7 +46,7 @@ fn main() {
 /// The build inputs are explicit so normal Handy builds remain possible without
 /// a system-wide OpenVINO SDK. Release builds set all three variables to
 /// verified extracted artifacts. Only the tested runtime closure is copied;
-/// headers, CMake metadata, samples, Python, CPU/GPU plugins, and tools are not
+/// headers, CMake metadata, samples, Python, GPU plugins, and tools are not
 /// shipped.
 fn stage_openvino_npu_runtime() {
     use std::path::{Path, PathBuf};
@@ -116,6 +116,12 @@ fn stage_openvino_npu_runtime() {
         (
             "libopenvino_intel_npu_plugin.so",
             "libopenvino_intel_npu_plugin.so",
+        ),
+        // ASRPipeline schedules a small amount of initialization work on CPU
+        // even when the model itself is explicitly compiled for NPU.
+        (
+            "libopenvino_intel_cpu_plugin.so",
+            "libopenvino_intel_cpu_plugin.so",
         ),
         (
             "libopenvino_intel_npu_compiler.so",
