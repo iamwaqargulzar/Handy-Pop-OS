@@ -1,6 +1,6 @@
 # OpenVINO NPU Integration for Handy Pop!_OS
 
-Status: Gate 1 feasible; Gate 2 memory research complete, integration pending
+Status: OpenVINO 2026.3 ASRPipeline selected; remaining gates pending
 
 Last updated: 2026-08-13
 
@@ -64,6 +64,20 @@ boundary. The Rust 0.11 `WhisperPipeline` wrapper was unstable when language
 was forced and did not expose all required constructor properties. The worker
 is a separate process so a native crash cannot kill Handy, strand recording
 state, or prevent crash-safe PipeWire volume restoration.
+
+### Language behavior
+
+The worker must pass Handy's currently selected language explicitly to
+`ASRPipeline` for each transcription. Changing the language in Handy must take
+effect without downloading another copy of the model. Automatic language
+detection must be used only when the user explicitly selects an automatic
+mode.
+
+Forced-language decoding controls the language Whisper uses to interpret and
+generate text; it does not guarantee that speech in a different language will
+be ignored. Mixed-language recordings must be tested separately. Handy must
+not advertise other-language suppression unless that behavior is implemented
+and verified independently of the pipeline's language setting.
 
 ### Removability requirement
 

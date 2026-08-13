@@ -13,9 +13,15 @@ peaked around 6.6-7.3 GiB and took roughly 2.5 minutes.
 Tests covered OpenVINO 2026.2 and 2026.3, native and compatibility allocation
 paths, both speech APIs, allocator trimming, NPU cache/weight properties, and
 the historical stateless export route. Repeated transcription was stable and
-did not leak. Production integration remains unstarted and requires a normal
-product decision that weighs the measured Linux footprint, cold-load time,
-package size, and NPU performance; there is no user-defined memory gate.
+did not leak. The selected integration target is the newer OpenVINO 2026.3 C++
+`ASRPipeline`; production integration remains unstarted pending the remaining
+reliability and packaging work.
+
+The selected Handy language must be passed explicitly to the NPU pipeline for
+every transcription rather than relying on automatic language detection.
+Forced decoding is not assumed to suppress speech in other languages: that
+behavior requires a dedicated mixed-language validation test before any such
+claim or filtering feature is implemented.
 
 All experiment-only models, runtimes, archives, audio, reports, caches, build
 trees, generated binaries, sockets, and the invalid hybrid model in desktop

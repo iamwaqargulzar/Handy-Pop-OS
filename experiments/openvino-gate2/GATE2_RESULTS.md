@@ -2,7 +2,7 @@
 
 Date: 2026-08-13
 
-Status: memory optimization experiments complete; integration decision pending
+Status: OpenVINO 2026.3 ASRPipeline selected; integration work pending
 
 ## Isolation
 
@@ -72,8 +72,10 @@ time and honestly reported `actual_device: NPU`.
 
 The prototype is stable, does not leak across repeated transcriptions, and uses
 approximately 4.51 GiB warm RSS. This is a measured implementation tradeoff,
-not a failed user requirement. Production integration remains unstarted while
-the footprint, cold-load delay, package size, and NPU performance are weighed.
+not a failed user requirement. OpenVINO 2026.3 C++ `ASRPipeline` is the selected
+forward path because it is the current API and reliably honored the explicit
+language setting in testing. Production integration remains unstarted until
+the remaining reliability and packaging gates are completed.
 
 ## Memory-reduction experiments
 
