@@ -146,6 +146,14 @@
     "downloadSpeed": "{{speed}} MB/s",
     "cancel": "Cancel",
     "cancelDownload": "Cancel download",
+    "npuLoading": {
+      "title": "Loading model on Intel NPU",
+      "description": "Preparing {{modelName}}",
+      "explanation": "The first load is a one-time compilation for this model and OpenVINO version. Handy stores the compiled NPU cache locally, so later loads reuse it and are substantially faster.",
+      "progressLabel": "Loading NPU model",
+      "waitMessage": "Please keep Handy open. Cached loads still need a few seconds to read the model and allocate memory.",
+      "closeLabel": "Close model loading message"
+    },
     "capabilities": {
       "languageSelection": "Supports multiple input languages",
       "singleLanguage": "Supports this language only",

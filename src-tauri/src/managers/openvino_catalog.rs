@@ -245,7 +245,7 @@ const SPECS: &[Spec] = &[
 ];
 
 pub fn models(multilingual_languages: &[String]) -> Vec<ModelInfo> {
-    SPECS
+    let mut models: Vec<ModelInfo> = SPECS
         .iter()
         .map(|spec| {
             let english_only = spec.slug.contains(".en-") || spec.slug.starts_with("distil-");
@@ -307,7 +307,79 @@ pub fn models(multilingual_languages: &[String]) -> Vec<ModelInfo> {
                 supports_language_detection: !english_only,
             }
         })
-        .collect()
+        .collect();
+
+    models.push(ModelInfo {
+        id: "openvino-parakeet-tdt-v3".to_string(),
+        name: "Parakeet TDT V3 (Intel NPU)".to_string(),
+        description: "Fast multilingual Parakeet transcription, independently verified on Intel NPU by Handy.".to_string(),
+        filename: "openvino-parakeet-tdt-v3".to_string(),
+        source: ModelSource::OpenVinoSnapshot {
+            repo_id: "FluidInference/parakeet-tdt-0.6b-v3-ov".to_string(),
+            revision: "dfd55eb6c85a9a8546a162bed84784245d5743c2".to_string(),
+        },
+        size_mb: 1225,
+        is_downloaded: false,
+        is_downloading: false,
+        partial_size: 0,
+        is_directory: true,
+        engine_type: EngineType::OpenVinoNpu,
+        accuracy_score: 0.95,
+        speed_score: 0.99,
+        supports_translation: false,
+        is_recommended: false,
+        supported_languages: [
+            "en", "es", "it", "fr", "de", "nl", "ru", "pl", "uk", "sk", "bg", "fi",
+            "ro", "hr", "cs", "sv", "et", "hu", "lt", "da", "mt", "sl", "lv", "el",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        supports_language_selection: false,
+        is_custom: false,
+        supports_streaming: false,
+        supports_language_detection: true,
+    });
+
+    for (precision, size_mb, accuracy, speed, recommended) in [
+        ("int8", 2215, 0.98, 0.88, true),
+        ("int4", 1330, 0.94, 0.94, false),
+    ] {
+        models.push(ModelInfo {
+            id: format!("openvino-qwen3-asr-1.7b-{precision}"),
+            name: format!("Qwen3-ASR 1.7B {} (Intel NPU)", precision.to_uppercase()),
+            description: if precision == "int8" {
+                "High-accuracy multilingual Qwen3-ASR using Handy's NPU-native decoder. Recommended Qwen precision."
+            } else {
+                "Smaller multilingual Qwen3-ASR using Handy's NPU-native INT4 decoder. Faster and leaner, with some accuracy tradeoff."
+            }
+            .to_string(),
+            filename: format!("handy-qwen3-asr-1.7b-{precision}-npu"),
+            source: ModelSource::OpenVinoSnapshot {
+                repo_id: format!(
+                    "iamwaqargulzar/handy-qwen3-asr-1.7b-openvino-npu-{precision}"
+                ),
+                revision: "main".to_string(),
+            },
+            size_mb,
+            is_downloaded: false,
+            is_downloading: false,
+            partial_size: 0,
+            is_directory: true,
+            engine_type: EngineType::OpenVinoNpu,
+            accuracy_score: accuracy,
+            speed_score: speed,
+            supports_translation: false,
+            is_recommended: recommended,
+            supported_languages: multilingual_languages.to_vec(),
+            supports_language_selection: true,
+            is_custom: false,
+            supports_streaming: false,
+            supports_language_detection: true,
+        });
+    }
+
+    models
 }
 
 #[cfg(test)]
@@ -317,7 +389,7 @@ mod tests {
     #[test]
     fn official_catalog_is_large_and_unique() {
         let models = models(&["en".into(), "ur".into()]);
-        assert_eq!(models.len(), 39);
+        assert_eq!(models.len(), 42);
         let ids: std::collections::HashSet<_> = models.iter().map(|m| &m.id).collect();
         assert_eq!(ids.len(), models.len());
         assert!(models

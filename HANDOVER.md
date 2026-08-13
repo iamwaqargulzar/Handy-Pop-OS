@@ -2,8 +2,7 @@
 
 ## OpenVINO NPU integration outcome (2026-08-13)
 
-The Linux OpenVINO work remains isolated on `codex/openvino-gate1` and has not
-been merged into the installed production branch. Full Whisper Large V3 INT8
+The Linux OpenVINO work remains isolated on `codex/openvino-gate1`. Full Whisper Large V3 INT8
 now runs through a worker integrated with Handy and faster than real time on
 the Lunar Lake NPU. The best measured sustained warm worker RSS is about
 4.50 GiB. Cold compilation peaked around 6.6-7.3 GiB and took roughly 2.5
@@ -31,10 +30,9 @@ Forced decoding is not assumed to suppress speech in other languages: that
 behavior requires a dedicated mixed-language validation test before any such
 claim or filtering feature is implemented.
 
-Temporary package-test model, runtime extraction, sample audio, and sockets are
-removed after the final results are recorded. The built `.deb` is retained as
-the deliverable. No installed package, user model directory, production
-branch, or backup is changed by this isolated build. See
+Temporary package-test runtime extraction and sockets are removed after the
+final results are recorded. The built `.deb` and the two Qwen model directories
+are retained as deliverables. See
 `docs/openvino-npu-linux-design.md` and
 `experiments/openvino-gate2/GATE2_RESULTS.md`.
 
@@ -42,13 +40,13 @@ Isolated NPU-enabled package artifact:
 
 ```text
 /home/waqar/Documents/projects/mine/Handy/.worktrees/openvino-gate1/src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb
-SHA-256: c58d4b0dd71bd06aaf983ca95bd2eb222b47185fd9f10196d12e5e4f4115a356
+SHA-256: b151aa836963871f8a66dd1eef661b326446e631103bc0bb0fd907f8394f9fe7
 ```
 
 ## Upstream review policy and result (2026-08-13)
 
 The upstream-only post-v0.9.5 history was reviewed before this build. Our
-Pop!_OS overlay, theme, tray, shortcut, update, and recording-volume behavior
+Pop!\_OS overlay, theme, tray, shortcut, update, and recording-volume behavior
 has priority over upstream changes. Two safe, independent fixes were adopted:
 compressed API responses (`7d2717d0`) and ydotool syntax detection
 (`6ac26648`). The upstream Wayland overlay work was not adopted because our
@@ -69,18 +67,143 @@ transcriptions to fail after the model had correctly compiled on NPU. Auto now
 leaves the worker language unset so OpenVINO performs detection; explicit
 languages are normalized to Whisper tokens such as `<|en|>`.
 
-The NPU-only catalogue now contains 39 immutable official OpenVINO revisions:
+The NPU-only catalogue now contains 42 entries: 39 official
+OpenVINO Whisper revisions plus the independently verified Parakeet TDT V3
+revision:
 Whisper Turbo, Large V2/V3, Distil Large V2/V3, Medium, Small, Base, and Tiny;
 multilingual and English-only variants; and INT4, INT8, and FP16 precision where
-published. Model downloads obtain the pinned revision manifest, enforce file
-sizes, and verify every Hugging Face LFS SHA-256. Parakeet and other non-Whisper
-architectures are not falsely routed through ASRPipeline.
+published, the verified Parakeet TDT V3 revision, and Handy's Qwen3-ASR 1.7B
+INT8/INT4 NPU formats. Model downloads obtain a snapshot manifest, enforce file
+sizes, and verify every Hugging Face LFS SHA-256. Non-Whisper architectures are
+never falsely routed through Whisper's ASRPipeline.
 
 The Models page displays an NPU-only filter beside Streaming and Translation
 only when backend probing exposes NPU models. The installed package was tested
 with the previously failing Auto-language recording: cold load completed in
 159.545 seconds and NPU transcription completed in 1.505 seconds with
 `actual_device: NPU`.
+
+### NPU model-loading feedback
+
+Selecting an OpenVINO NPU model now opens a non-dismissible loading dialog.
+It names the selected model, explains that the initial OpenVINO compilation of
+a large model can take several minutes, and displays an indeterminate progress
+bar until the backend emits `loading_completed` or `loading_failed`. OpenVINO
+does not expose a reliable compilation percentage, so the UI deliberately does
+not invent one. The dialog is driven by the existing `model-state-changed`
+lifecycle and applies to selections from both model-selection interfaces.
+
+OpenVINO's persistent compiled-model cache is enabled for every NPU model. The
+cache lives below each downloaded model at
+`.handy-npu-cache/openvino-2026.3`, so different models and runtime versions do
+not collide and deleting a model also deletes its cache. A real Whisper Large
+V3 INT8 measurement improved from 169.968 seconds for the first compilation to
+7.629 seconds for the cached reload (about 22 times faster). Its weightless
+compiled cache occupied 2.9 GB in addition to the 1.57 GB downloaded model.
+The loading dialog explains the one-time compilation and notes that cached
+loading still reads model data and allocates memory.
+
+When Translate to English is enabled while a transcription-only model such as
+Parakeet is active, Handy now coerces only that run to transcription. The
+stored preference is preserved for translation-capable Whisper models.
+
+The NPU filter is mutually exclusive with the Streaming and Translation
+filters. Enabling NPU clears those capability filters so the independently
+verified Parakeet entry cannot be hidden by stale filter state.
+
+The native worker installs Linux `PR_SET_PDEATHSIG` supervision before opening
+its socket. If Handy crashes or is force-killed, the kernel terminates the
+multi-gigabyte worker instead of leaving an orphan process and stale NPU state.
+Normal shutdown still uses the bounded worker protocol and reaps the child.
+
+### Parakeet TDT V3 and Qwen3-ASR implementation
+
+Parakeet TDT V3 is integrated into the same isolated native worker using the
+minimal Apache-2.0 Eddy OpenVINO decoder pinned at commit
+`07028cf333f97244f0f3ff718cc748d7dd0a8915`. Handy disables Eddy's silent CPU
+fallback. On the local Intel Core Ultra 9 288V, all three speech graphs
+(encoder, decoder, and joint) compiled on NPU; only mel preprocessing runs on
+CPU by design. The pinned model revision is
+`FluidInference/parakeet-tdt-0.6b-v3-ov@dfd55eb6c85a9a8546a162bed84784245d5743c2`.
+Cold load took 30.849 seconds and the 11-second JFK sample transcribed correctly
+in 229 ms through the integrated worker protocol.
+
+The final Debian payload was tested independently of the development worker.
+It enumerated `CPU` and `NPU`, compiled the Parakeet encoder, decoder, and joint
+graphs on `NPU`, loaded cold in 27.196 seconds, and transcribed the same sample
+correctly in 220 ms (239 ms wall time). The package is 128,487,172 bytes, only
+102,812 bytes larger than the preserved Whisper-only NPU installer because the
+Parakeet weights remain an on-demand model download. Its SHA-256 is
+`570c351081bb89a3cf6b2547dea96e76a98ed96fdbcc36c36f3f0810adb39553`.
+The prior installer is preserved outside the repository at
+`/home/waqar/.cache/handy-openvino-build/installers/Handy_0.9.5_openvino-whisper-only_amd64.deb`.
+
+The subsequently hardened installed package is 128,490,080 bytes with SHA-256
+`e3ca15e1a8bfb63392264d8d4b92a642bc58aca7a3155160a3630b69a537e7c3`.
+Its installed Parakeet path loaded from cache in 383 ms and transcribed the
+11-second JFK sample twice in 282 ms and 141 ms. A forced Handy termination
+also verified that no NPU worker survived.
+
+Local installation still requires administrator authentication. The tested
+Parakeet snapshot has been moved, without duplication, to
+`~/.local/share/com.pais.handy/models/openvino-parakeet-tdt-v3` so Handy can
+recognize it immediately after package installation.
+
+Qwen3-ASR 1.7B is now implemented as an NPU-native pipeline. The official ASR
+encoder remains speech-trained Qwen and is compiled on NPU with a fixed
+100-frame chunk. Qwen's speech-trained language weights are mapped without
+modification into the standard Qwen3 causal decoder architecture, exported
+with the conventional `inputs_embeds + attention_mask + position_ids`
+contract, and compiled through bounded NPUW on NPU. CPU performs only tokenizer,
+mel-spectrogram, embedding lookup/audio merge, and greedy token selection; no
+speech encoder or language-model layer silently falls back to CPU/GPU.
+
+The model format includes a marker (`handy_qwen_npu.json`), encoder, prompt
+embedding graph, standard stateful decoder, tokenizer/detokenizer, and metadata.
+INT8 is the recommended quality format (2.1 GiB locally); INT4 is retained as a
+smaller 1.4 GiB option with an accuracy tradeoff. Both remain on-demand model
+downloads and are not bundled into the 122.6 MiB installer.
+
+The integrated native worker loaded the INT8 model with
+`EXECUTION_DEVICES=NPU` and transcribed the 11-second JFK sample in 2.037 seconds:
+“And so, my fellow Americans, ask not what your country can do for you. Ask what
+you can do for your country.” The NPU INT8 near-tie around punctuation is handled
+by a deliberately narrow A-punctuation-A duplicate suppression rule; a broad
+repetition penalty was tested and rejected because it altered legitimate text.
+The decoder uses a 1,024-token prompt bucket (approximately the model's
+30-second ASR window) and a 256-token response allowance. Compiled blobs use the
+same per-model OpenVINO 2026.3 cache as Whisper and Parakeet.
+
+The final Debian package was installed over Handy 0.9.5 on 2026-08-13. The
+worker at `/usr/lib/Handy/handy-openvino-npu` then loaded the INT8 model on NPU
+and produced the same complete reference transcript in 1.722 seconds. Handy was
+restarted with `--start-hidden`; the installed application and both Qwen model
+directories are active.
+
+The installed-package regression pass later found two independent failures.
+All model workers had reused a PID-only Unix socket, so switching models could
+let the retiring worker shut down and unlink the replacement worker's socket.
+Workers now receive a unique monotonic socket name, and a dead/disconnected
+worker is recreated once with the same model before reporting an error. Qwen
+also incorrectly disabled NPUW's shared language-model head and forwarded the
+CPU embedding graph's padded 1,024-token output rather than its actual sequence.
+The supported shared-head default is restored and prompt/token embeddings are
+trimmed to their real lengths.
+
+The corrected Debian package is 128,521,528 bytes with SHA-256
+`b888179e34dc10d5ccf5d3ab3bd929006a29738015430aa9f7917886a37a63dd`.
+After installing that exact package, the same 11-second JFK WAV passed through
+all three installed NPU backends: Whisper Large V3 INT8 in 3.797 seconds,
+Qwen3-ASR 1.7B INT8 in 2.447 seconds, and Parakeet TDT 0.6B V3 in 240 ms.
+Every result reported `bound_backend: openvino-npu` and produced the complete
+reference sentence.
+
+Local model paths:
+
+```text
+~/.local/share/com.pais.handy/models/handy-qwen3-asr-1.7b-int8-npu
+~/.local/share/com.pais.handy/models/handy-qwen3-asr-1.7b-int4-npu
+```
 
 Last verified: 2026-08-13 (Asia/Karachi)
 

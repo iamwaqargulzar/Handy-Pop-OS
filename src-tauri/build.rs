@@ -54,6 +54,7 @@ fn stage_openvino_npu_runtime() {
 
     for variable in [
         "HANDY_OPENVINO_GENAI_ROOT",
+        "HANDY_OPENVINO_GENAI_SOURCE",
         "HANDY_NPU_LEVEL_ZERO_LIB",
         "HANDY_LEVEL_ZERO_LOADER_LIB",
     ] {
@@ -76,9 +77,14 @@ fn stage_openvino_npu_runtime() {
         std::env::var_os("HANDY_LEVEL_ZERO_LOADER_LIB")
             .expect("HANDY_LEVEL_ZERO_LOADER_LIB is required with HANDY_OPENVINO_GENAI_ROOT"),
     );
+    let genai_source = PathBuf::from(
+        std::env::var_os("HANDY_OPENVINO_GENAI_SOURCE")
+            .expect("HANDY_OPENVINO_GENAI_SOURCE is required with HANDY_OPENVINO_GENAI_ROOT"),
+    );
 
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let source = manifest.join("openvino-worker/main.cpp");
+    let eddy = manifest.join("openvino-worker/third_party/eddy");
     let runtime_lib = root.join("runtime/lib/intel64");
     let tbb_lib = root.join("runtime/3rdparty/tbb/lib");
     let nlohmann = root.join("samples/cpp/thirdparty/nlohmann_json/single_include");
@@ -88,9 +94,24 @@ fn stage_openvino_npu_runtime() {
 
     let worker = destination.join("handy-openvino-npu");
     let status = Command::new("g++")
-        .args(["-std=c++17", "-O2", "-DNDEBUG"])
+        .args(["-std=c++20", "-O2", "-DNDEBUG"])
         .arg(&source)
+        .args([
+            eddy.join("src/core/model.cpp"),
+            eddy.join("src/backends/openvino_backend.cpp"),
+            eddy.join("src/utils/openvino_utils.cpp"),
+            eddy.join("src/models/parakeet-v2/parakeet_openvino.cpp"),
+            eddy.join("src/models/parakeet-v2/parakeet_preprocessor.cpp"),
+            eddy.join("src/models/parakeet-v2/parakeet_encoder.cpp"),
+            eddy.join("src/models/parakeet-v2/parakeet_decoder.cpp"),
+            eddy.join("src/models/parakeet-v2/parakeet_chunking.cpp"),
+            eddy.join("src/models/parakeet-v2/tokenizer.cpp"),
+            genai_source.join("src/cpp/src/whisper/feature_extractor.cpp"),
+        ])
+        .arg(format!("-I{}", eddy.join("include").display()))
+        .arg(format!("-I{}", eddy.join("src/utils").display()))
         .arg(format!("-I{}", root.join("runtime/include").display()))
+        .arg(format!("-I{}", genai_source.join("src/cpp/src").display()))
         .arg(format!("-I{}", nlohmann.display()))
         .arg(format!("-L{}", runtime_lib.display()))
         .arg(format!("-L{}", tbb_lib.display()))

@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,7 @@ const WORKER_START_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct OpenVinoNpuEngine {
     child: Child,
     socket_path: PathBuf,
+    model_path: PathBuf,
 }
 
 impl OpenVinoNpuEngine {
@@ -44,7 +46,11 @@ impl OpenVinoNpuEngine {
         let child = command
             .spawn()
             .with_context(|| format!("failed to start {}", worker_path.display()))?;
-        let mut engine = Self { child, socket_path };
+        let mut engine = Self {
+            child,
+            socket_path,
+            model_path: model_path.to_path_buf(),
+        };
         engine.wait_until_ready()?;
 
         let probe = engine.request(json!({"command": "probe"}), &[])?;
@@ -84,20 +90,45 @@ impl OpenVinoNpuEngine {
         let payload = unsafe {
             std::slice::from_raw_parts(audio.as_ptr().cast::<u8>(), std::mem::size_of_val(audio))
         };
-        let response = self.request(
+        let make_request = || {
             json!({
                 "command": "transcribe",
                 "language": language,
                 "task": if translate_to_english { "translate" } else { "transcribe" },
                 "payload_bytes": payload.len(),
-            }),
-            payload,
-        )?;
+            })
+        };
+        let response = match self.request(make_request(), payload) {
+            Ok(response) => response,
+            Err(first_error) if self.worker_connection_is_broken(&first_error) => {
+                log::warn!(
+                    "OpenVINO worker connection was lost; restarting it and reloading {} once: {first_error}",
+                    self.model_path.display()
+                );
+                let replacement = Self::load(&self.model_path.clone()).with_context(|| {
+                    format!("failed to recover OpenVINO worker after: {first_error}")
+                })?;
+                *self = replacement;
+                self.request(make_request(), payload)?
+            }
+            Err(error) => return Err(error),
+        };
         response
             .pointer("/transcription/text")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
             .ok_or_else(|| anyhow!("OpenVINO worker returned no transcription text"))
+    }
+
+    fn worker_connection_is_broken(&mut self, error: &anyhow::Error) -> bool {
+        if matches!(self.child.try_wait(), Ok(Some(_))) {
+            return true;
+        }
+        let message = error.to_string();
+        message.contains("failed to connect to the OpenVINO worker")
+            || message.contains("Broken pipe")
+            || message.contains("Connection reset")
+            || message.contains("unexpected end of file")
     }
 
     fn wait_until_ready(&mut self) -> Result<()> {
@@ -268,10 +299,15 @@ fn worker_path() -> Result<PathBuf> {
 }
 
 fn socket_path() -> PathBuf {
+    static NEXT_SOCKET: AtomicU64 = AtomicU64::new(1);
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    runtime.join(format!("handy-openvino-{}.sock", std::process::id()))
+    runtime.join(format!(
+        "handy-openvino-{}-{}.sock",
+        std::process::id(),
+        NEXT_SOCKET.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 fn private_library_path(worker: &Path) -> std::ffi::OsString {

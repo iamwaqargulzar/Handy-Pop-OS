@@ -2399,6 +2399,8 @@ impl ModelManager {
                     && (name.ends_with(".json")
                         || name.ends_with(".txt")
                         || (name.starts_with("openvino_")
+                            && (name.ends_with(".bin") || name.ends_with(".xml")))
+                        || (name.starts_with("parakeet_")
                             && (name.ends_with(".bin") || name.ends_with(".xml"))));
                 allowed.then(|| {
                     (
@@ -2413,12 +2415,20 @@ impl ModelManager {
                 })
             })
             .collect();
-        if !files
+        let required_files: &[&str] = if model_info.id == "openvino-parakeet-tdt-v3" {
+            &[
+                "parakeet_melspectogram.bin",
+                "parakeet_encoder.bin",
+                "parakeet_decoder.bin",
+                "parakeet_joint.bin",
+                "parakeet_v3_vocab.json",
+            ]
+        } else {
+            &["openvino_encoder_model.bin", "openvino_decoder_model.bin"]
+        };
+        if !required_files
             .iter()
-            .any(|(name, _, _)| name == "openvino_encoder_model.bin")
-            || !files
-                .iter()
-                .any(|(name, _, _)| name == "openvino_decoder_model.bin")
+            .all(|required| files.iter().any(|(name, _, _)| name == required))
         {
             return Err(anyhow::anyhow!("OpenVINO snapshot manifest is incomplete"));
         }

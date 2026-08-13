@@ -178,6 +178,20 @@ export const ModelsSettings: React.FC = () => {
     }
   };
 
+  const toggleNpuFilter = () => {
+    setFilterNpu((enabled) => {
+      const next = !enabled;
+      if (next) {
+        // Capability filters previously combined as AND. That made the NPU
+        // button appear empty whenever Translation or Streaming was left on,
+        // hiding valid transcription-only NPU models such as Parakeet.
+        setFilterStreaming(false);
+        setFilterTranslation(false);
+      }
+      return next;
+    });
+  };
+
   // Filter models by search query (name + description), language filter, and toggles
   const filteredModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -326,7 +340,7 @@ export const ModelsSettings: React.FC = () => {
               {hasNpuModels && (
                 <button
                   type="button"
-                  onClick={() => setFilterNpu((enabled) => !enabled)}
+                  onClick={toggleNpuFilter}
                   title={t("settings.models.filters.npu")}
                   aria-label={t("settings.models.filters.npu")}
                   aria-pressed={filterNpu}

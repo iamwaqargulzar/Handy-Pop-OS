@@ -14,7 +14,7 @@ ignored experiment-local artifacts.
 
 ## Tested stack
 
-- Pop!_OS 24.04, kernel `7.0.11-76070011-generic`
+- Pop!\_OS 24.04, kernel `7.0.11-76070011-generic`
 - Intel Core Ultra 9 288V / Lunar Lake NPU `8086:643e`
 - kernel driver `intel_vpu`
 - `/dev/accel/accel0`, group `render`
@@ -63,18 +63,18 @@ snapshot and audio input were valid independently of the NPU.
 The successful five-run Rust measurement used automatic language detection,
 timestamps, and one persistent pipeline:
 
-| Measurement | Result |
-| --- | ---: |
-| Model compile/load | 144.264 s |
-| First inference | 1.542 s |
-| Warm inference 2 | 0.787 s |
-| Warm inference 3 | 0.767 s |
-| Warm inference 4 | 0.756 s |
-| Warm inference 5 | 0.747 s |
-| Warm median | 0.762 s |
-| Warm median real-time factor | 0.310 |
-| Effective warm speed | approximately 3.23x real time |
-| Peak resident memory | 7,093,960 KiB (approximately 6.77 GiB) |
+| Measurement                  |                                 Result |
+| ---------------------------- | -------------------------------------: |
+| Model compile/load           |                              144.264 s |
+| First inference              |                                1.542 s |
+| Warm inference 2             |                                0.787 s |
+| Warm inference 3             |                                0.767 s |
+| Warm inference 4             |                                0.756 s |
+| Warm inference 5             |                                0.747 s |
+| Warm median                  |                                0.762 s |
+| Warm median real-time factor |                                  0.310 |
+| Effective warm speed         |          approximately 3.23x real time |
+| Peak resident memory         | 7,093,960 KiB (approximately 6.77 GiB) |
 
 The process must remain warm. Compiling Large V3 on every transcription is not
 viable.

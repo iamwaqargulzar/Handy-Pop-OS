@@ -130,3 +130,27 @@
   stroke: var(--color-logo-stroke);
   stroke-width: 1;
 }
+@keyframes npu-loading-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  50% {
+    transform: translateX(75%);
+  }
+  100% {
+    transform: translateX(310%);
+  }
+}
+
+.npu-loading-progress {
+  width: 34%;
+  animation: npu-loading-slide 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .npu-loading-progress {
+    width: 100%;
+    animation: none;
+    opacity: 0.65;
+  }
+}

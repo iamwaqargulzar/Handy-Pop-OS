@@ -1180,6 +1180,21 @@ impl TranscriptionManager {
         let active_model = self
             .get_current_model()
             .unwrap_or_else(|| settings.selected_model.clone());
+        // Translation is a user preference, but it is only a valid execution
+        // task for models that advertise the capability. Keep the preference
+        // intact so switching back to Whisper restores it; merely coerce this
+        // run for transcription-only engines such as Parakeet TDT.
+        let translate_this_run = settings.translate_to_english
+            && self
+                .model_manager
+                .get_model_info(&active_model)
+                .is_some_and(|model| model.supports_translation);
+        if settings.translate_to_english && !translate_this_run {
+            debug!(
+                "Model '{}' does not support translation; using transcription for this run",
+                active_model
+            );
+        }
         // Resolve the persisted language *intent* into the language this model
         // will actually use. The coercion is capability-aware (a must-pick model
         // never receives "auto") and computed fresh here — it is never written
@@ -1372,7 +1387,7 @@ impl TranscriptionManager {
                     }
                     #[cfg(target_os = "linux")]
                     LoadedEngine::OpenVinoNpu(openvino_engine) => openvino_engine
-                        .transcribe(&audio, &validated_language, settings.translate_to_english)
+                        .transcribe(&audio, &validated_language, translate_this_run)
                         .map_err(|e| anyhow::anyhow!("OpenVINO NPU transcription failed: {}", e)),
                 }
             }));
@@ -1428,7 +1443,7 @@ impl TranscriptionManager {
         let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
 
         let et = std::time::Instant::now();
-        let translation_note = if settings.translate_to_english {
+        let translation_note = if translate_this_run {
             " (translated)"
         } else {
             ""

@@ -20,6 +20,7 @@ import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
+import { NpuModelLoadingOverlay } from "@/components/NpuModelLoadingOverlay";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -324,6 +325,7 @@ function App() {
     <>
       {toaster}
       {content}
+      <NpuModelLoadingOverlay />
     </>
   );
 }

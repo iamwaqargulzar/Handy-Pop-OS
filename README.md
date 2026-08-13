@@ -1,23 +1,36 @@
 # Handy Pop!\_OS
 
-## Offline speech-to-text and voice typing for Pop!\_OS and COSMIC Wayland
+## Offline speech-to-text for Pop!\_OS and Ubuntu 24.04 with Intel NPU support
 
 Handy Pop!\_OS is a privacy-first desktop dictation application optimized for
-Pop!\_OS 24.04, COSMIC Wayland, and PipeWire. It transcribes speech locally with
-Whisper or Parakeet, pastes the result into the active application, and adds a
-multi-monitor overlay, crash-safe audio ducking, resilient shortcuts, and a
-dark COSMIC-friendly interface.
+Pop!\_OS 24.04, COSMIC Wayland, Ubuntu 24.04, and PipeWire. It transcribes speech
+locally with Whisper, Qwen3-ASR, or Parakeet, pastes the result into the active
+application, and adds optional Intel NPU acceleration, a multi-monitor overlay,
+crash-safe audio ducking, resilient shortcuts, and a dark Linux interface.
+
+Pop!\_OS 24.04 with COSMIC Wayland is the fully tested platform. Ubuntu 24.04
+LTS on x86_64 is expected to run the application and its CPU/Vulkan backends,
+but Ubuntu GNOME Wayland overlay placement and global shortcuts still require
+distribution-specific validation. Ubuntu 22.04 is not supported by the current
+Intel NPU build.
+
+**An Intel NPU is optional.** Handy uses one package for every supported
+computer. On a machine without a compatible Intel NPU, the application works
+normally with its CPU and Vulkan models; the unsupported NPU-only choices are
+simply hidden from the Models page.
 
 | Project fact       | Details                                                                               |
 | ------------------ | ------------------------------------------------------------------------------------- |
 | Current release    | [`0.9.5-popos.1`](docs/releases/0.9.5-popos.1.md)                                     |
 | Primary platform   | Pop!\_OS 24.04 on x86_64                                                              |
-| Desktop support    | COSMIC Wayland; best-effort support for other Linux desktops                          |
-| Speech recognition | Local Whisper-family and Parakeet models                                              |
+| Ubuntu support     | Ubuntu 24.04 LTS expected compatible; GNOME Wayland QA pending                        |
+| Desktop support    | COSMIC Wayland tested; best-effort support for GNOME and other Linux desktops         |
+| Speech recognition | Local Whisper, Qwen3-ASR, Parakeet, and other Handy-compatible models                 |
+| Acceleration       | Intel NPU for supported OpenVINO models; Vulkan or CPU for conventional models        |
 | Audio stack        | PipeWire and WirePlumber                                                              |
 | Privacy            | Speech recognition stays on the computer; optional post-processing is user-configured |
 | License            | MIT                                                                                   |
-| Last verified      | 11 August 2026                                                                        |
+| Last verified      | 13 August 2026                                                                        |
 
 ## What is Handy Pop!\_OS?
 
@@ -26,9 +39,11 @@ offline speech recognition on Pop!\_OS. Press a global shortcut, speak, and stop
 recording; the application converts the audio to text locally and pastes it
 into the text field that was active when recording began.
 
-The project is designed for COSMIC users who need a visible recording overlay,
-correct multi-monitor placement, reliable Wayland pasting, and temporary audio
-reduction without repeatedly showing the desktop volume popup.
+The project is designed for Pop!\_OS and Ubuntu users who need private offline
+speech-to-text, a visible recording overlay, reliable Linux pasting, and
+temporary audio reduction without repeatedly showing the desktop volume popup.
+Its COSMIC-specific multi-monitor placement is tested on Pop!\_OS; other
+Wayland compositors use the available Linux fallback behavior.
 
 ## Why was this Pop!\_OS version created?
 
@@ -58,8 +73,12 @@ display. This version addresses those Linux-specific problems directly.
 
 ## Key features
 
-- Completely local speech recognition with downloadable Whisper-family and
-  Parakeet models.
+- Completely local speech recognition with downloadable Whisper, Qwen3-ASR,
+  Parakeet, and other Handy-compatible models.
+- Intel NPU-only OpenVINO models are shown automatically on supported systems;
+  model weights remain optional downloads rather than inflating the installer.
+- Verified Intel NPU paths for Whisper Large V3 INT8, Qwen3-ASR 1.7B INT8, and
+  Parakeet TDT 0.6B V3, with persistent compiled-model caches for faster reloads.
 - Vulkan acceleration when supported, with CPU inference available as a
   fallback.
 - Configurable toggle-to-record and push-to-talk shortcuts.
@@ -103,7 +122,71 @@ The recommended installation method is the Debian package attached to the
    and configure the recording shortcut.
 
 Speech-recognition models are downloaded separately on first use. The package
-does not include a language model chosen on the user's behalf.
+does not include a language model chosen on the user's behalf. Users do not
+need an Intel NPU or OpenVINO model to install and use Handy.
+
+## Pop!\_OS and Ubuntu compatibility
+
+### Does Handy Pop!\_OS work on Ubuntu 24.04?
+
+The current x86_64 Debian package is expected to install and run on Ubuntu
+24.04 LTS. Its declared GTK 3, WebKitGTK 4.1, PipeWire, WirePlumber, OpenBLAS,
+AppIndicator, and GTK Layer Shell dependencies are available in Ubuntu 24.04.
+CPU transcription and Vulkan acceleration do not require Intel NPU hardware.
+
+Pop!\_OS 24.04 with COSMIC Wayland remains the only fully verified desktop.
+Ubuntu's default GNOME Wayland session differs from COSMIC: GNOME may handle
+global shortcuts, layer-shell surfaces, pointer-output selection, tray icons,
+and multi-monitor overlay placement differently. Handy falls back to a regular
+overlay window when GTK Layer Shell is unavailable, but that fallback has not
+yet completed the same multi-monitor QA performed on COSMIC.
+
+| Environment                      | Current status                  | What users should expect                                                                                        |
+| -------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Pop!\_OS 24.04 + COSMIC Wayland  | Tested and supported            | Full custom overlay, tray, shortcut, PipeWire, CPU, Vulkan, and supported Intel NPU behavior                    |
+| Ubuntu 24.04 + GNOME Wayland     | Expected compatible; QA pending | Core dictation should work; overlay placement and global shortcuts may vary by GNOME configuration              |
+| Ubuntu 24.04 + X11               | Expected compatible; QA pending | Core dictation and ordinary window positioning should work; not yet release-tested                              |
+| Ubuntu 22.04                     | Unsupported by this build       | Do not install the current Intel NPU package; its runtime and current Intel driver baseline target Ubuntu 24.04 |
+| Other Debian-based distributions | Best effort                     | Dependency versions, compositor behavior, and hardware drivers must be checked locally                          |
+
+### What is required for Intel NPU speech recognition on Ubuntu?
+
+NPU acceleration requires compatible Intel hardware and a working Linux NPU
+device. The package includes Handy's private OpenVINO userspace runtime, but it
+cannot bundle or replace the operating system's kernel module and firmware.
+Before NPU models appear, the machine must provide:
+
+- A supported Intel NPU, currently in Meteor Lake, Arrow Lake, Lunar Lake,
+  Panther Lake, or another device supported by Intel's current Linux NPU driver.
+- The Linux `intel_vpu` kernel module and matching NPU firmware.
+- A usable `/dev/accel/accel0` device and permission to access it, commonly
+  through the `render` group.
+- Ubuntu 24.04 with a compatible kernel/driver combination.
+
+Handy probes the NPU at runtime. If the probe succeeds, the Models page exposes
+the NPU filter and OpenVINO downloads. If it fails, those entries remain hidden
+and conventional CPU/Vulkan models continue to work normally without warnings
+or a separate package. Handy never labels a CPU or GPU fallback as NPU
+execution.
+
+Intel documents its supported hardware, kernel-module checks, firmware, and
+Ubuntu 24.04 packages in the
+[Linux NPU driver documentation](https://github.com/intel/linux-npu-driver/blob/main/docs/overview.md)
+and [verified driver releases](https://github.com/intel/linux-npu-driver/releases).
+
+### Which models run on the Intel NPU?
+
+- **Whisper Large V3 INT8:** multilingual transcription and supported
+  speech-to-English translation.
+- **Qwen3-ASR 1.7B INT8:** multilingual transcription only. Qwen does not
+  perform speech translation, and Urdu is not in its official language list;
+  unsupported Urdu speech may be identified as Hindi.
+- **Parakeet TDT 0.6B V3:** fast multilingual transcription only; it does not
+  translate speech into English.
+
+Selecting a language in a transcription-only model constrains transcription;
+it does not turn that model into a translator. Use Whisper Large V3 and enable
+translation when speech in another language must become English text.
 
 ## How does crash-safe audio ducking work?
 
@@ -202,6 +285,8 @@ The latest checkpoint passed:
 - Rust Clippy checks, with only pre-existing unrelated warnings
 - Normal and forced-crash PipeWire routing restoration tests
 - Multi-monitor pointer-following overlay tests
+- Installed-package OpenVINO NPU transcriptions with Whisper Large V3 INT8,
+  Qwen3-ASR 1.7B INT8, and Parakeet TDT 0.6B V3
 
 The detailed implementation evidence is recorded in [HANDOVER.md](HANDOVER.md)
 and [the volume-reduction investigation](docs/2026-08-10-v0.9.5-volume-reduction.md).
@@ -209,6 +294,9 @@ and [the volume-reduction investigation](docs/2026-08-10-v0.9.5-volume-reduction
 ## Known limitations
 
 - Pop!\_OS 24.04 on x86_64 is the primary tested target.
+- Ubuntu 24.04 LTS is expected to be compatible, but GNOME Wayland overlay,
+  tray, and global-shortcut behavior has not completed release QA.
+- Ubuntu 22.04 is not supported by the current NPU-enabled package.
 - Low-level application-owned shortcuts need `/dev/input` access through the
   `input` group. COSMIC or another Wayland compositor can still impose its own
   shortcut restrictions.
@@ -219,6 +307,9 @@ and [the volume-reduction investigation](docs/2026-08-10-v0.9.5-volume-reduction
   until the next recording.
 - Optional LLM post-processing can send completed text to a provider selected
   by the user; local speech recognition itself does not require that feature.
+- Intel NPU models require supported hardware, the system `intel_vpu` driver,
+  firmware, `/dev/accel/accel0`, and appropriate device permissions. These
+  system components are not replaced by the Handy package.
 
 ## Frequently asked questions
 
@@ -235,6 +326,27 @@ Yes. Pop!\_OS 24.04 with COSMIC Wayland is the primary tested environment. The
 custom native overlay uses GTK layer shell, follows the pointer to the active
 display, and avoids taking keyboard focus from the application receiving the
 transcribed text.
+
+### Is this an offline speech-to-text app for Ubuntu 24.04?
+
+Yes, the Debian package is expected to provide offline voice typing on Ubuntu
+24.04 LTS. CPU and Vulkan transcription should not require an Intel NPU. Ubuntu
+GNOME Wayland is not yet as thoroughly tested as Pop!\_OS COSMIC, so shortcut,
+tray, and multi-monitor overlay behavior should be considered best effort until
+the Ubuntu test matrix is complete.
+
+### Does Intel NPU support work automatically on every Ubuntu computer?
+
+No. NPU models appear only when Handy detects compatible Intel NPU hardware and
+a functioning Linux NPU driver. Computers without a supported NPU can continue
+using the normal CPU or Vulkan models without installing a separate Handy
+edition.
+
+### Can Qwen3-ASR translate Urdu speech into English?
+
+No. Qwen3-ASR is used for transcription, not speech translation, and Urdu is
+not officially supported by that model. For Urdu-to-English or other
+speech-to-English translation, select Whisper Large V3 and enable translation.
 
 ### Can it type into any Linux application?
 
