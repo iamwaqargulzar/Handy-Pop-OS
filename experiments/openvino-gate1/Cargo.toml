@@ -1,0 +1,15 @@
+[package]
+name = "handy-openvino-gate1"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+hound = "3.5"
+openvino = { version = "0.11.0", features = ["runtime-linking"] }
+openvino-genai = { version = "0.11.0", features = ["runtime-linking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
