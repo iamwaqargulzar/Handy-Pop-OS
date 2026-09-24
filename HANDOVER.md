@@ -19,8 +19,12 @@ implementation and recovery notes.
 Validation completed for this release: frontend build and lint, formatting,
 275 Rust unit tests, Debian package inspection, CPU transcription, Vulkan
 transcription, and NPU transcription with Whisper Large v3 INT8, Qwen3-ASR
-1.7B INT8, and Parakeet TDT v3. The package SHA-256 is
-`91d78b5b5c6df90787ff066cef58efbf350aded35199f3367a89d136aff9c0e3`.
+1.7B INT8, Qwen3-ASR 0.6B INT8/INT4, and Parakeet TDT v3. The final OpenVINO
+2026.4 package is 133,561,434 bytes with SHA-256
+`af2b3a24b0cbb37178fe4b49dd487a161338383b060675abf68a73db9abad629`.
+It was installed through APT on 2026-09-24; `/usr/bin/handy` matched the
+package payload byte-for-byte, and the installed worker reported
+`actual_device=NPU`, `npu_available=true`, and available devices `CPU,NPU`.
 
 ## OpenVINO NPU integration outcome (2026-08-13)
 
@@ -529,8 +533,9 @@ ln -sfn /usr/bin/handy ~/.local/bin/handy
   binary.
 - Automatic updates are intentionally unavailable. Rebuild and reinstall the
   package manually for future changes.
-- The current work is uncommitted. Review and commit it before changing
-  branches or handing the repository to a clean environment.
+- The OpenVINO 2026.4 implementation is checkpointed in Git at `cb8cd7c0`.
+  Any later documentation-only commit does not change the verified package
+  payload recorded at the top of this file.
 
 ## Modified files
 
