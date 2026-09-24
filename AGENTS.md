@@ -55,23 +55,19 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
 
 ### Backend Structure (src-tauri/src/)
 
-- `lib.rs` - Main entry point, Tauri setup, manager initialization, single-instance CLI handling (`--load-model`)
+- `lib.rs` - Main entry point, Tauri setup, manager initialization
 - `managers/` - Core business logic:
   - `audio.rs` - Audio recording and device management
   - `model.rs` - Model downloading and management
-  - `transcription.rs` - Local speech-to-text processing pipeline
+  - `transcription.rs` - Speech-to-text processing pipeline
   - `history.rs` - Transcription history storage
 - `audio_toolkit/` - Low-level audio processing:
   - `audio/` - Device enumeration, recording, resampling
   - `vad/` - Voice Activity Detection (Silero VAD)
 - `commands/` - Tauri command handlers for frontend communication
 - `cli.rs` - CLI argument definitions (clap derive)
-- `shortcut/` - Global keyboard shortcut handling:
-  - `mod.rs` - Shortcut registration, dynamic `model:<id>` binding management
-  - `handler.rs` - Shortcut event dispatch (includes model-switch hotkey interception)
-  - `handy_keys.rs` - Low-level hook manager with sleep/lock watchdog threads
-- `actions.rs` - Post-processing pipeline with multi-model fallback chain
-- `settings.rs` - Application settings management (includes theme, reasoning effort, priority models)
+- `shortcut.rs` - Global keyboard shortcut handling
+- `settings.rs` - Application settings management
 - `overlay.rs` - Recording overlay window (platform-specific)
 - `signal_handle.rs` - `send_transcription_input()` reusable function
 - `utils.rs` - Platform detection helpers
@@ -98,11 +94,9 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
 
 **Command-Event Architecture:** Frontend → Backend via Tauri commands; Backend → Frontend via events.
 
-**Pipeline Processing:** Audio → VAD → Whisper/Parakeet → Text output → (optional) Post-Processing with multi-model fallback → Clipboard/Paste
+**Pipeline Processing:** Audio → VAD → Whisper/Parakeet → Text output → Clipboard/Paste
 
 **State Flow:** Zustand → Tauri Command → Rust State → Persistence (tauri-plugin-store)
-
-**Dynamic Hotkey Bindings:** Model-specific hotkeys are stored in `settings.bindings` with the key format `model:<model_id>`. On registration, the shortcut module loops all bindings (not just defaults) to register dynamic shortcuts. On trigger, `handler.rs` intercepts `model:*` binding IDs to switch the active model.
 
 ### Technology Stack
 
@@ -181,22 +175,20 @@ Handy supports command-line parameters on all platforms for integration with scr
 
 **Implementation:** `cli.rs` (definitions), `main.rs` (parsing), `lib.rs` (applying), `signal_handle.rs` (shared logic)
 
-| Flag                     | Description                                                     |
-| ------------------------ | --------------------------------------------------------------- |
-| `--toggle-transcription` | Toggle recording on/off on a running instance                   |
-| `--toggle-post-process`  | Toggle recording with post-processing on/off                    |
-| `--cancel`               | Cancel the current operation on a running instance              |
-| `--start-hidden`         | Launch without showing the main window (tray icon visible)      |
-| `--no-tray`              | Launch without system tray (closing window quits the app)       |
-| `--debug`                | Enable debug mode with verbose (Trace) logging                  |
-| `--load-model <QUERY>`   | Switch the active model on a running instance (substring match) |
+| Flag                     | Description                                                |
+| ------------------------ | ---------------------------------------------------------- |
+| `--toggle-transcription` | Toggle recording on/off on a running instance              |
+| `--toggle-post-process`  | Toggle recording with post-processing on/off               |
+| `--cancel`               | Cancel the current operation on a running instance         |
+| `--start-hidden`         | Launch without showing the main window (tray icon visible) |
+| `--no-tray`              | Launch without system tray (closing window quits the app)  |
+| `--debug`                | Enable debug mode with verbose (Trace) logging             |
 
 **Key design decisions:**
 
 - CLI flags are runtime-only overrides — they do NOT modify persisted settings
 - Remote control flags work via `tauri_plugin_single_instance`: second instance sends args, then exits
 - `send_transcription_input()` in `signal_handle.rs` is shared between signal handlers and CLI
-- `--load-model` performs a case-insensitive substring match against all downloaded models, switches the active model, and plays a confirmation chime. Useful for Logitech G HUB macro integration.
 
 ## Debug Mode
 
@@ -205,52 +197,9 @@ Access debug features: `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux)
 ## Platform Notes
 
 - **macOS**: Metal acceleration, accessibility permissions required for keyboard shortcuts
-- **Windows**: Vulkan acceleration, code signing. See [Windows compilation workaround](#windows-compilation-workaround) below.
+- **Windows**: Vulkan acceleration, code signing. Implicit Vulkan layers (overlays, capture hooks) are disabled for the Handy process via `VK_LOADER_LAYERS_DISABLE=~implicit~` set in `main.rs`; opt out with `HANDY_KEEP_VULKAN_IMPLICIT_LAYERS=1` or by setting `VK_LOADER_LAYERS_DISABLE` yourself
 - **Linux**: OpenBLAS + Vulkan, limited Wayland support, overlay uses GTK layer shell (disable with `HANDY_NO_GTK_LAYER_SHELL=1`)
-
-## Windows Compilation Workaround
-
-On Windows, the Vulkan shader generator creates deeply nested paths that exceed the 260-character `MAX_PATH` limit. **You must redirect Cargo's target directory** to a short path:
-
-```powershell
-# Type-check only:
-$env:CARGO_TARGET_DIR="C:\t"; cargo check
-
-# Full release build (skip code signing if no Azure certificate):
-$env:CARGO_TARGET_DIR="C:\t"; bun run tauri build --no-sign
-```
-
-See [BUILD.md](BUILD.md) for detailed platform-specific instructions.
-
-## Custom Fork Features
-
-This fork adds the following features on top of the upstream Handy codebase:
-
-### Dark Neutral Theme
-
-New installations start with a charcoal theme, off-white text, and a cool blue accent. The existing theme selector remains available.
-
-### Sleep/Resume & Session Lock Watchdogs
-
-In `shortcut/handy_keys.rs`, the elapsed-time watchdog detects gaps longer than five seconds and re-registers shortcuts after suspend/resume on all platforms. Windows additionally polls the WTS session state to recover after lock/unlock. Linux recovery is best-effort and does not bypass Wayland compositor restrictions.
-
-### Post-Processing Multi-Model Fallback Chain
-
-Three priority model selectors (Priority 1, 2, 3) stored as pipe-delimited strings in `post_process_models`. On API error or rate-limit, the system automatically retries with the next model.
-
-- Backend: `actions.rs` (fallback loop), `settings.rs` (schema)
-- Frontend: `PostProcessingSettings.tsx` (3 dropdown selectors), `usePostProcessProviderState.ts` (pipe parsing)
-
-### Dynamic Model Switch Global Hotkeys
-
-Users can assign global keyboard hotkeys to any downloaded model directly from the Models page. Stored in `settings.bindings` as `model:<model_id>`.
-
-- Backend: `shortcut/mod.rs` (registration), `shortcut/handler.rs` (event dispatch)
-- Frontend: `ModelCard.tsx` (inline hotkey recorder), `ShortcutInput.tsx` (`plain` prop for inline layout)
-
-### CLI Model Switching (`--load-model`)
-
-Switch the active model from the command line: `handy --load-model large` (or `handy.exe --load-model large` on Windows). Useful for desktop shortcuts and macro integration.
+- **Nix/NixOS**: the Nix package sets `HANDY_DISABLE_UPDATER=1` to force-disable the self-updater at runtime without touching the persisted setting (self-update can't work against an immutable `/nix/store`)
 
 ## Troubleshooting
 

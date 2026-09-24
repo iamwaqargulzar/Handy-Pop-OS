@@ -1056,6 +1056,20 @@ pub fn show_recording_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "recording");
 }
 
+/// Notify the overlay after the microphone has delivered its first samples.
+/// Queueing this on the UI thread prevents readiness from overtaking the
+/// preceding show event on very fast devices.
+pub fn emit_recording_ready(app_handle: &AppHandle) {
+    if !OVERLAY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        let _ = handle.emit_to("recording_overlay", "recording-ready", ());
+    });
+}
+
 /// Shows the larger streaming overlay that displays live transcription text
 pub fn show_streaming_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "streaming");

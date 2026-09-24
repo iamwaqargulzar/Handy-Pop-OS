@@ -165,6 +165,12 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     );
 }
 
+/// Compatibility entry point for lifecycle code introduced upstream in v0.9.7.
+/// All tray updates still pass through this fork's blue-tinted icon implementation.
+pub fn set_tray_state(app: &AppHandle, icon: TrayIconState) {
+    change_tray_icon(app, icon);
+}
+
 /// Re-applies the last known tray state — for when only the *theme* changed
 /// and the state itself (idle/recording/transcribing) should be preserved.
 pub fn refresh_tray_icon(app: &AppHandle) {

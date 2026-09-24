@@ -1,24 +1,24 @@
 use crate::audio_toolkit::{
     list_input_devices,
     vad::{
-        SmoothedVad, VAD_OFFLINE_HANGOVER_FRAMES, VAD_ONSET_FRAMES, VAD_PREFILL_FRAMES,
-        VAD_STREAMING_HANGOVER_FRAMES,
+        frames_for_duration_ms, EarshotVad, SmoothedVad, VAD_OFFLINE_HANGOVER_MS, VAD_ONSET_MS,
+        VAD_PREFILL_MS, VAD_STREAMING_HANGOVER_MS,
     },
-    AudioRecorder, SileroVad, VadPolicy,
+    AudioRecorder, SileroVad, VadPolicy, VoiceActivityDetector,
 };
 use crate::helpers::clamshell;
 use crate::managers::transcription::StreamRouter;
-use crate::settings::{get_settings, AppSettings};
+use crate::settings::{get_settings, write_settings, AppSettings, VadBackend};
 use crate::utils;
 use log::{debug, error, info, trace, warn};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-const VAD_THRESHOLD: f32 = 0.3;
+const SILERO_VAD_THRESHOLD: f32 = 0.3;
+const EARSHOT_VAD_THRESHOLD: f32 = 0.5;
 
 fn set_mute(mute: bool) {
     // Expected behavior:
@@ -230,666 +230,6 @@ fn restore_mute(prev_muted: Option<bool>) {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum OutputVolumeBackend {
-    #[cfg(target_os = "windows")]
-    Windows,
-    #[cfg(target_os = "linux")]
-    PipeWireDucking,
-    #[cfg(target_os = "linux")]
-    PipeWire,
-    #[cfg(target_os = "linux")]
-    PulseAudio,
-    #[cfg(target_os = "linux")]
-    Alsa,
-    #[cfg(target_os = "macos")]
-    MacOs,
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Debug)]
-struct LinuxDuckingSession {
-    loopback: std::process::Child,
-    cleanup_watchdog: std::process::Child,
-}
-
-#[derive(Debug)]
-struct OutputVolumeSnapshot {
-    backend: OutputVolumeBackend,
-    /// Normalized output level in the inclusive 0.0–1.0 range.
-    scalar: f32,
-    #[cfg(target_os = "linux")]
-    ducking: Option<LinuxDuckingSession>,
-}
-
-fn attenuated_volume(current: f32, reduction_percent: u8) -> f32 {
-    let reduction = f32::from(reduction_percent.min(100)) / 100.0;
-    (current.clamp(0.0, 1.0) * (1.0 - reduction)).clamp(0.0, 1.0)
-}
-
-#[cfg(target_os = "linux")]
-fn parse_first_percentage(output: &str) -> Option<f32> {
-    output
-        .split_whitespace()
-        .find_map(|part| {
-            let cleaned = part.trim_matches(|character| character == '[' || character == ']');
-            cleaned
-                .strip_suffix('%')
-                .and_then(|value| value.parse::<f32>().ok())
-        })
-        .map(|value| (value / 100.0).clamp(0.0, 1.0))
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Clone, Debug, PartialEq)]
-struct LinuxDuckedLink {
-    output_port: String,
-    original_input_port: String,
-    duck_input_port: String,
-}
-
-#[cfg(target_os = "linux")]
-fn pipewire_ducking_plan(
-    output: &[u8],
-    default_sink_name: &str,
-    duck_sink_name: &str,
-    duck_output_name: &str,
-) -> Option<(u32, Vec<LinuxDuckedLink>)> {
-    use std::collections::HashMap;
-
-    let serde_json::Value::Array(objects) = serde_json::from_slice(output).ok()? else {
-        return None;
-    };
-    let node_id = |name: &str| {
-        objects.iter().find_map(|object| {
-            (object.get("type")?.as_str()? == "PipeWire:Interface:Node"
-                && object
-                    .pointer("/info/props/node.name")?
-                    .as_str()
-                    .is_some_and(|node_name| node_name == name))
-            .then(|| u32::try_from(object.get("id")?.as_u64()?).ok())
-            .flatten()
-        })
-    };
-    let default_sink_id = node_id(default_sink_name)?;
-    let duck_sink_id = node_id(duck_sink_name)?;
-    let duck_output_id = node_id(duck_output_name)?;
-
-    let node_names: HashMap<u32, String> = objects
-        .iter()
-        .filter_map(|object| {
-            if object.get("type")?.as_str()? != "PipeWire:Interface:Node" {
-                return None;
-            }
-            Some((
-                u32::try_from(object.get("id")?.as_u64()?).ok()?,
-                object
-                    .pointer("/info/props/node.name")?
-                    .as_str()?
-                    .to_owned(),
-            ))
-        })
-        .collect();
-    let mut port_endpoints = HashMap::new();
-    let mut default_channels = HashMap::new();
-    let mut duck_channels = HashMap::new();
-    for object in &objects {
-        if object.get("type").and_then(|value| value.as_str()) != Some("PipeWire:Interface:Port") {
-            continue;
-        }
-        let Some(port_id) = object
-            .get("id")
-            .and_then(|value| value.as_u64())
-            .and_then(|value| u32::try_from(value).ok())
-        else {
-            continue;
-        };
-        let Some(port_node_id) = object
-            .pointer("/info/props/node.id")
-            .and_then(|value| value.as_u64())
-            .and_then(|value| u32::try_from(value).ok())
-        else {
-            continue;
-        };
-        let Some(channel) = object
-            .pointer("/info/props/audio.channel")
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        let Some(port_name) = object
-            .pointer("/info/props/port.name")
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        let Some(node_name) = node_names.get(&port_node_id) else {
-            continue;
-        };
-        let endpoint = format!("{node_name}:{port_name}");
-        port_endpoints.insert(port_id, endpoint.clone());
-        let is_input = object
-            .pointer("/info/direction")
-            .and_then(|value| value.as_str())
-            == Some("input");
-        if port_node_id == default_sink_id && is_input {
-            default_channels.insert(port_id, channel.to_owned());
-        } else if port_node_id == duck_sink_id && is_input {
-            duck_channels.insert(channel.to_owned(), endpoint);
-        }
-    }
-
-    let links = objects
-        .iter()
-        .filter_map(|object| {
-            if object.get("type")?.as_str()? != "PipeWire:Interface:Link" {
-                return None;
-            }
-            let input_node =
-                u32::try_from(object.pointer("/info/input-node-id")?.as_u64()?).ok()?;
-            let output_node =
-                u32::try_from(object.pointer("/info/output-node-id")?.as_u64()?).ok()?;
-            if input_node != default_sink_id || output_node == duck_output_id {
-                return None;
-            }
-            let output_port =
-                u32::try_from(object.pointer("/info/output-port-id")?.as_u64()?).ok()?;
-            let original_input_port =
-                u32::try_from(object.pointer("/info/input-port-id")?.as_u64()?).ok()?;
-            let channel = default_channels.get(&original_input_port)?;
-            Some(LinuxDuckedLink {
-                output_port: port_endpoints.get(&output_port)?.clone(),
-                original_input_port: port_endpoints.get(&original_input_port)?.clone(),
-                duck_input_port: duck_channels.get(channel)?.clone(),
-            })
-        })
-        .collect();
-    Some((duck_output_id, links))
-}
-
-#[cfg(target_os = "linux")]
-fn stop_linux_ducking_process(process: &mut std::process::Child) {
-    // The child is a small watchdog shell. SIGTERM lets its trap terminate and
-    // reap pw-loopback; Child::kill would use SIGKILL and skip that cleanup.
-    unsafe {
-        libc::kill(process.id() as i32, libc::SIGTERM);
-    }
-    let _ = process.wait();
-}
-
-#[cfg(target_os = "linux")]
-fn start_pipewire_ducking(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
-    use std::process::{Command, Stdio};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let default_sink_output = Command::new("pactl")
-        .arg("get-default-sink")
-        .output()
-        .ok()?;
-    if !default_sink_output.status.success() {
-        return None;
-    }
-    let default_sink_name = String::from_utf8_lossy(&default_sink_output.stdout)
-        .trim()
-        .to_owned();
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_millis();
-    let duck_sink_name = format!("handy_duck_sink_{}_{}", std::process::id(), unique);
-    let duck_output_name = format!("handy_duck_output_{}_{}", std::process::id(), unique);
-    let capture_props = format!("node.name={duck_sink_name} media.class=Audio/Sink");
-    let playback_props = format!("node.name={duck_output_name} application.name=Handy-Ducking");
-
-    // Keep pw-loopback behind a wrapper so SIGTERM can reap it cleanly. A
-    // separate graph-cleanup watchdog is added below after the runtime links
-    // are known.
-    const LOOPBACK_WRAPPER: &str = r#"
-child_pid=
-cleanup() {
-    if [ -n "$child_pid" ]; then
-        kill "$child_pid" 2>/dev/null
-        wait "$child_pid" 2>/dev/null
-    fi
-}
-trap cleanup EXIT TERM INT
-"$@" &
-child_pid=$!
-wait "$child_pid"
-"#;
-    let parent_pid = std::process::id().to_string();
-    let mut loopback_command = Command::new("sh");
-    loopback_command
-        .args([
-            "-c",
-            LOOPBACK_WRAPPER,
-            "handy-duck-loopback",
-            "pw-loopback",
-            "--name",
-            &format!("handy_duck_{unique}"),
-            "--playback",
-            &default_sink_name,
-            "--capture-props",
-            &capture_props,
-            "--playback-props",
-            &playback_props,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut loopback = loopback_command.spawn().ok()?;
-
-    let mut plan = None;
-    for _ in 0..40 {
-        if loopback.try_wait().ok().flatten().is_some() {
-            return None;
-        }
-        let Ok(graph) = Command::new("pw-dump").output() else {
-            stop_linux_ducking_process(&mut loopback);
-            return None;
-        };
-        plan = pipewire_ducking_plan(
-            &graph.stdout,
-            &default_sink_name,
-            &duck_sink_name,
-            &duck_output_name,
-        );
-        if plan.is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    let Some(_) = plan else {
-        stop_linux_ducking_process(&mut loopback);
-        return None;
-    };
-    // The loopback nodes can become visible one graph cycle before existing
-    // playback links settle. Refresh after a short grace period so streams
-    // that were already playing when recording began are included.
-    std::thread::sleep(Duration::from_millis(75));
-    let Ok(graph) = Command::new("pw-dump").output() else {
-        stop_linux_ducking_process(&mut loopback);
-        return None;
-    };
-    let Some((duck_output_id, links)) = pipewire_ducking_plan(
-        &graph.stdout,
-        &default_sink_name,
-        &duck_sink_name,
-        &duck_output_name,
-    ) else {
-        stop_linux_ducking_process(&mut loopback);
-        return None;
-    };
-
-    let gain = 1.0 - f32::from(reduction_percent.min(100)) / 100.0;
-    if !Command::new("wpctl")
-        .args([
-            "set-volume",
-            &duck_output_id.to_string(),
-            &format!("{gain:.4}"),
-        ])
-        .status()
-        .is_ok_and(|status| status.success())
-    {
-        stop_linux_ducking_process(&mut loopback);
-        return None;
-    }
-
-    // This process is independent from Handy's application logic. It restores
-    // the original graph and terminates the loopback when Handy exits, when
-    // the loopback fails, or when normal cleanup sends it SIGTERM. Because the
-    // link endpoints are passed as argv values, application/device names are
-    // not evaluated as shell text.
-    const CLEANUP_WATCHDOG: &str = r#"
-parent_pid=$1
-loopback_pid=$2
-shift 2
-cleaned=
-cleanup() {
-    if [ -n "$cleaned" ]; then return; fi
-    cleaned=1
-    while [ "$#" -ge 3 ]; do
-        pw-link --disconnect "$1" "$3" >/dev/null 2>&1
-        pw-link "$1" "$2" >/dev/null 2>&1
-        shift 3
-    done
-    kill -TERM "$loopback_pid" 2>/dev/null
-}
-trap 'cleanup "$@"; exit 0' TERM INT
-while kill -0 "$parent_pid" 2>/dev/null && kill -0 "$loopback_pid" 2>/dev/null; do
-    sleep 0.2
-done
-cleanup "$@"
-"#;
-    let loopback_pid = loopback.id().to_string();
-    let mut cleanup_command = Command::new("sh");
-    cleanup_command
-        .args([
-            "-c",
-            CLEANUP_WATCHDOG,
-            "handy-duck-cleanup",
-            &parent_pid,
-            &loopback_pid,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    for link in &links {
-        cleanup_command.args([
-            &link.output_port,
-            &link.original_input_port,
-            &link.duck_input_port,
-        ]);
-    }
-    let Ok(cleanup_watchdog) = cleanup_command.spawn() else {
-        stop_linux_ducking_process(&mut loopback);
-        return None;
-    };
-
-    let mut redirected_count = 0_usize;
-    for link in links {
-        debug!(
-            "Redirecting PipeWire link {} -> {} through {}",
-            link.output_port, link.original_input_port, link.duck_input_port
-        );
-        if !Command::new("pw-link")
-            .args(["--disconnect", &link.output_port, &link.original_input_port])
-            .status()
-            .is_ok_and(|status| status.success())
-        {
-            continue;
-        }
-        if Command::new("pw-link")
-            .args([&link.output_port, &link.duck_input_port])
-            .status()
-            .is_ok_and(|status| status.success())
-        {
-            redirected_count += 1;
-        } else {
-            let _ = Command::new("pw-link")
-                .args([&link.output_port, &link.original_input_port])
-                .status();
-        }
-    }
-    debug!("Redirected {redirected_count} PipeWire playback link(s) through ducking gain");
-
-    Some(OutputVolumeSnapshot {
-        backend: OutputVolumeBackend::PipeWireDucking,
-        scalar: 0.0,
-        ducking: Some(LinuxDuckingSession {
-            loopback,
-            cleanup_watchdog,
-        }),
-    })
-}
-
-#[cfg(target_os = "linux")]
-fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
-    use std::process::Command;
-
-    if reduction_percent == 0 {
-        return None;
-    }
-
-    // Route playback through a private gain node instead of modifying either
-    // saved application volumes or the physical sink. COSMIC only shows its
-    // volume OSD for changes to the physical sink. Vanished streams require no
-    // restoration because their own volume values are never changed.
-    if let Some(snapshot) = start_pipewire_ducking(reduction_percent) {
-        return Some(snapshot);
-    }
-    // On COSMIC, falling back to the master sink would reintroduce the OSD and
-    // feedback sound that this path exists to avoid. Fail open instead.
-    if std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
-        desktop
-            .split(':')
-            .any(|part| part.eq_ignore_ascii_case("COSMIC"))
-    }) {
-        return None;
-    }
-
-    if let Ok(output) = Command::new("wpctl")
-        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
-        .output()
-    {
-        if output.status.success() {
-            if let Some(current) = String::from_utf8_lossy(&output.stdout)
-                .split_whitespace()
-                .find_map(|part| part.parse::<f32>().ok())
-            {
-                let reduced = attenuated_volume(current, reduction_percent);
-                if Command::new("wpctl")
-                    .args([
-                        "set-volume",
-                        "@DEFAULT_AUDIO_SINK@",
-                        &format!("{reduced:.4}"),
-                    ])
-                    .status()
-                    .is_ok_and(|status| status.success())
-                {
-                    return Some(OutputVolumeSnapshot {
-                        backend: OutputVolumeBackend::PipeWire,
-                        scalar: current,
-                        ducking: None,
-                    });
-                }
-            }
-        }
-    }
-
-    if let Ok(output) = Command::new("pactl")
-        .env("LC_ALL", "C")
-        .args(["get-sink-volume", "@DEFAULT_SINK@"])
-        .output()
-    {
-        if output.status.success() {
-            if let Some(current) = parse_first_percentage(&String::from_utf8_lossy(&output.stdout))
-            {
-                let reduced_percent =
-                    (attenuated_volume(current, reduction_percent) * 100.0).round();
-                if Command::new("pactl")
-                    .args([
-                        "set-sink-volume",
-                        "@DEFAULT_SINK@",
-                        &format!("{reduced_percent:.0}%"),
-                    ])
-                    .status()
-                    .is_ok_and(|status| status.success())
-                {
-                    return Some(OutputVolumeSnapshot {
-                        backend: OutputVolumeBackend::PulseAudio,
-                        scalar: current,
-                        ducking: None,
-                    });
-                }
-            }
-        }
-    }
-
-    if let Ok(output) = Command::new("amixer")
-        .env("LC_ALL", "C")
-        .args(["get", "Master"])
-        .output()
-    {
-        if output.status.success() {
-            if let Some(current) = parse_first_percentage(&String::from_utf8_lossy(&output.stdout))
-            {
-                let reduced_percent =
-                    (attenuated_volume(current, reduction_percent) * 100.0).round();
-                if Command::new("amixer")
-                    .args(["set", "Master", &format!("{reduced_percent:.0}%")])
-                    .status()
-                    .is_ok_and(|status| status.success())
-                {
-                    return Some(OutputVolumeSnapshot {
-                        backend: OutputVolumeBackend::Alsa,
-                        scalar: current,
-                        ducking: None,
-                    });
-                }
-            }
-        }
-    }
-
-    None
-}
-
-#[cfg(target_os = "windows")]
-fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
-    unsafe {
-        use windows::Win32::{
-            Media::Audio::{
-                eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
-                MMDeviceEnumerator,
-            },
-            System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
-        };
-
-        if reduction_percent == 0 {
-            return None;
-        }
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        let device = enumerator
-            .GetDefaultAudioEndpoint(eRender, eMultimedia)
-            .ok()?;
-        let endpoint = device
-            .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
-            .ok()?;
-        let current = endpoint.GetMasterVolumeLevelScalar().ok()?;
-        endpoint
-            .SetMasterVolumeLevelScalar(
-                attenuated_volume(current, reduction_percent),
-                std::ptr::null(),
-            )
-            .ok()?;
-        Some(OutputVolumeSnapshot {
-            backend: OutputVolumeBackend::Windows,
-            scalar: current,
-        })
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn reduce_output_volume(reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
-    use std::process::Command;
-
-    if reduction_percent == 0 {
-        return None;
-    }
-    let output = Command::new("osascript")
-        .args(["-e", "output volume of (get volume settings)"])
-        .output()
-        .ok()?;
-    let current_percent = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<f32>()?;
-    let current = (current_percent / 100.0).clamp(0.0, 1.0);
-    let reduced_percent = (attenuated_volume(current, reduction_percent) * 100.0).round();
-    let status = Command::new("osascript")
-        .args([
-            "-e",
-            &format!("set volume output volume {reduced_percent:.0}"),
-        ])
-        .status()
-        .ok()?;
-    status.success().then_some(OutputVolumeSnapshot {
-        backend: OutputVolumeBackend::MacOs,
-        scalar: current,
-    })
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-fn reduce_output_volume(_reduction_percent: u8) -> Option<OutputVolumeSnapshot> {
-    None
-}
-
-fn restore_output_volume(snapshot: OutputVolumeSnapshot) {
-    #[cfg(target_os = "linux")]
-    {
-        use std::process::Command;
-
-        let percent = (snapshot.scalar * 100.0).round();
-        let restored = match snapshot.backend {
-            OutputVolumeBackend::PipeWireDucking => {
-                if let Some(mut ducking) = snapshot.ducking {
-                    stop_linux_ducking_process(&mut ducking.cleanup_watchdog);
-                    stop_linux_ducking_process(&mut ducking.loopback);
-                }
-                return;
-            }
-            OutputVolumeBackend::PipeWire => Command::new("wpctl")
-                .args([
-                    "set-volume",
-                    "@DEFAULT_AUDIO_SINK@",
-                    &format!("{:.4}", snapshot.scalar),
-                ])
-                .status(),
-            OutputVolumeBackend::PulseAudio => Command::new("pactl")
-                .args([
-                    "set-sink-volume",
-                    "@DEFAULT_SINK@",
-                    &format!("{percent:.0}%"),
-                ])
-                .status(),
-            OutputVolumeBackend::Alsa => Command::new("amixer")
-                .args(["set", "Master", &format!("{percent:.0}%")])
-                .status(),
-        };
-        if restored.is_err() || restored.is_ok_and(|status| !status.success()) {
-            warn!("Failed to restore system output volume");
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    unsafe {
-        use windows::Win32::{
-            Media::Audio::{
-                eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
-                MMDeviceEnumerator,
-            },
-            System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
-        };
-        if !matches!(snapshot.backend, OutputVolumeBackend::Windows) {
-            return;
-        }
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let restored = (|| -> Option<()> {
-            let enumerator: IMMDeviceEnumerator =
-                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eRender, eMultimedia)
-                .ok()?;
-            let endpoint = device
-                .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
-                .ok()?;
-            endpoint
-                .SetMasterVolumeLevelScalar(snapshot.scalar, std::ptr::null())
-                .ok()?;
-            Some(())
-        })();
-        if restored.is_none() {
-            warn!("Failed to restore system output volume");
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        if !matches!(snapshot.backend, OutputVolumeBackend::MacOs) {
-            return;
-        }
-        let percent = (snapshot.scalar * 100.0).round();
-        let restored = Command::new("osascript")
-            .args(["-e", &format!("set volume output volume {percent:.0}")])
-            .status();
-        if restored.is_err() || restored.is_ok_and(|status| !status.success()) {
-            warn!("Failed to restore system output volume");
-        }
-    }
-}
-
 const WHISPER_SAMPLE_RATE: usize = 16000;
 
 /* ──────────────────────────────────────────────────────────────── */
@@ -907,43 +247,81 @@ pub enum MicrophoneMode {
     OnDemand,
 }
 
-/// Tracks the temporary output adjustment so the user's exact mute/volume state
-/// can be restored after recording, cancellation, or stream recovery.
-#[derive(Debug, Default)]
+/// Tracks our forced "mute while recording" so we can restore the user's audio
+/// exactly as it was. `did_mute` is true while our mute is active; `prev_muted`
+/// is the system mute state captured just before we muted, used to decide
+/// whether to unmute on stop (so a system that was already muted stays muted).
+#[derive(Debug, Default, Clone, Copy)]
 struct MuteState {
     did_mute: bool,
     prev_muted: Option<bool>,
-    volume_snapshot: Option<OutputVolumeSnapshot>,
 }
 
-fn restore_output_adjustment(state: &mut MuteState) {
-    if state.did_mute {
-        restore_mute(state.prev_muted);
-    }
-    if let Some(snapshot) = state.volume_snapshot.take() {
-        restore_output_volume(snapshot);
-    }
-    state.did_mute = false;
+/// The persisted microphone preference currently in effect. Clamshell and
+/// regular selections are kept distinct so losing a clamshell-only device does
+/// not erase the user's normal microphone preference.
+enum DesiredMicrophone {
+    Default,
+    Selected(String),
+    Clamshell(String),
+}
+
+/// Result of resolving the persisted preference to a live cpal device.
+/// `device: None` means cpal should open the system default. The unavailable
+/// name is populated only when enumeration succeeded and confirmed that the
+/// user's regular selected microphone is missing.
+struct MicrophoneResolution {
+    device: Option<cpal::Device>,
+    unavailable_selected_microphone: Option<String>,
 }
 
 /* ──────────────────────────────────────────────────────────────── */
 
 fn create_audio_recorder(
-    vad_path: &Path,
+    backend: VadBackend,
     app_handle: &tauri::AppHandle,
     selected_channel: Option<u16>,
     stream_router: Arc<StreamRouter>,
 ) -> Result<AudioRecorder, anyhow::Error> {
-    // A single Silero engine covers both the offline and streaming policies (never
-    // active at once within a recording), so the recorder reconfigures its
-    // hangover tail per session rather than keeping two ONNX sessions resident.
-    let silero = SileroVad::new(vad_path, VAD_THRESHOLD)
-        .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
+    let detector: Box<dyn VoiceActivityDetector> = match backend {
+        VadBackend::Silero => {
+            let vad_path = app_handle
+                .path()
+                .resolve(
+                    "resources/models/silero_vad_v4.onnx",
+                    tauri::path::BaseDirectory::Resource,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {e}"))?;
+            Box::new(
+                SileroVad::new(vad_path, SILERO_VAD_THRESHOLD)
+                    .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {e}"))?,
+            )
+        }
+        VadBackend::Earshot => Box::new(
+            EarshotVad::new(EARSHOT_VAD_THRESHOLD)
+                .map_err(|e| anyhow::anyhow!("Failed to create EarshotVad: {e}"))?,
+        ),
+    };
+
+    // Earshot uses 16 ms frames while Silero uses 30 ms. Convert the existing
+    // time-based capture profile to each detector's frame size so selecting a
+    // backend does not shorten pre-roll, onset, or post-speech audio.
+    let frame_samples = detector.frame_samples();
+    let prefill_frames = frames_for_duration_ms(VAD_PREFILL_MS, frame_samples);
+    let offline_hangover_frames = frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, frame_samples);
+    let streaming_hangover_frames =
+        frames_for_duration_ms(VAD_STREAMING_HANGOVER_MS, frame_samples);
+    let onset_frames = frames_for_duration_ms(VAD_ONSET_MS, frame_samples);
     let smoothed_vad = SmoothedVad::new(
-        Box::new(silero),
-        VAD_PREFILL_FRAMES,
-        VAD_OFFLINE_HANGOVER_FRAMES,
-        VAD_ONSET_FRAMES,
+        detector,
+        prefill_frames,
+        offline_hangover_frames,
+        onset_frames,
+    );
+
+    info!(
+        "Initialized {:?} VAD backend ({} samples/frame)",
+        backend, frame_samples
     );
 
     // Recorder with VAD, a spectrum-level callback that forwards level updates to
@@ -953,8 +331,8 @@ fn create_audio_recorder(
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
         .with_vad(
             Box::new(smoothed_vad),
-            VAD_OFFLINE_HANGOVER_FRAMES,
-            VAD_STREAMING_HANGOVER_FRAMES,
+            offline_hangover_frames,
+            streaming_hangover_frames,
         )
         .with_selected_channel(selected_channel)
         .with_level_callback({
@@ -974,6 +352,23 @@ fn create_audio_recorder(
 }
 
 /* ──────────────────────────────────────────────────────────────── */
+
+/// One recording session's first-sample notification. Waiting on this never
+/// blocks the shortcut coordinator: callers hand it to a dedicated worker.
+pub struct RecordingReadiness {
+    receiver: mpsc::Receiver<()>,
+    generation: u64,
+}
+
+impl RecordingReadiness {
+    pub fn wait(self) -> bool {
+        self.receiver.recv().is_ok()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+}
 
 #[derive(Clone)]
 pub struct AudioRecordingManager {
@@ -996,6 +391,10 @@ pub struct AudioRecordingManager {
     /// the main/webview thread when a worker holds `state` across a slow
     /// CoreAudio open/close.
     recording_active: Arc<AtomicBool>,
+    /// Invalidates asynchronous first-sample UI/chime work when a recording is
+    /// stopped or cancelled. This prevents a slow device from producing a late
+    /// "ready" indication for a session the user already ended.
+    capture_generation: Arc<AtomicU64>,
     /// Resolution of a *named* microphone (selected or clamshell) to its cpal
     /// device, cached so on-demand recording starts skip the full device
     /// enumeration (~40-110ms). Keyed by the resolved name, so a settings
@@ -1032,6 +431,7 @@ impl AudioRecordingManager {
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             recording_active: Arc::new(AtomicBool::new(false)),
+            capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
         };
 
@@ -1045,11 +445,11 @@ impl AudioRecordingManager {
 
     /* ---------- helper methods --------------------------------------------- */
 
-    /// The microphone name the settings ask for, or `None` for the system
-    /// default. Only runs the clamshell probe (an `ioreg` subprocess, ~10-20ms)
-    /// when a clamshell microphone is actually configured.
-    fn desired_device_name(&self, settings: &AppSettings) -> Option<String> {
-        if settings.clamshell_microphone.is_some() {
+    /// The persisted microphone preference currently in effect. Only runs the
+    /// clamshell probe (an `ioreg` subprocess, ~10-20ms) when a clamshell
+    /// microphone is actually configured.
+    fn desired_microphone(&self, settings: &AppSettings) -> DesiredMicrophone {
+        if let Some(clamshell_microphone) = &settings.clamshell_microphone {
             let clamshell_started = Instant::now();
             let is_clamshell = clamshell::is_clamshell().unwrap_or(false);
             debug!(
@@ -1058,23 +458,31 @@ impl AudioRecordingManager {
                 is_clamshell
             );
             if is_clamshell {
-                return settings.clamshell_microphone.clone();
+                return DesiredMicrophone::Clamshell(clamshell_microphone.clone());
             }
         }
-        settings.selected_microphone.clone()
+        match &settings.selected_microphone {
+            Some(name) => DesiredMicrophone::Selected(name.clone()),
+            None => DesiredMicrophone::Default,
+        }
     }
 
     pub fn invalidate_device_cache(&self) {
         *self.cached_device.lock().unwrap() = None;
     }
 
-    fn get_effective_microphone_device(&self, settings: &AppSettings) -> Option<cpal::Device> {
-        let device_name = match self.desired_device_name(settings) {
-            Some(name) => name,
-            None => {
+    fn resolve_microphone_device(&self, settings: &AppSettings) -> MicrophoneResolution {
+        let desired = self.desired_microphone(settings);
+        let (device_name, selected_microphone) = match desired {
+            DesiredMicrophone::Default => {
                 debug!("device resolve: no mic configured -> system default");
-                return None;
+                return MicrophoneResolution {
+                    device: None,
+                    unavailable_selected_microphone: None,
+                };
             }
+            DesiredMicrophone::Selected(name) => (name.clone(), Some(name)),
+            DesiredMicrophone::Clamshell(name) => (name, None),
         };
 
         // Cache hit: skip the full enumeration. A stale device (unplugged)
@@ -1082,20 +490,28 @@ impl AudioRecordingManager {
         if let Some((cached_name, device)) = self.cached_device.lock().unwrap().as_ref() {
             if *cached_name == device_name {
                 debug!("device resolve: cache hit for '{}'", device_name);
-                return Some(device.clone());
+                return MicrophoneResolution {
+                    device: Some(device.clone()),
+                    unavailable_selected_microphone: None,
+                };
             }
         }
 
-        // Find the device by name
+        // Only report a selected microphone as unavailable when enumeration
+        // itself succeeded. A backend enumeration error may be transient and
+        // must not erase the user's persisted preference.
         let enumerate_started = Instant::now();
-        let device = match list_input_devices() {
-            Ok(devices) => devices
-                .into_iter()
-                .find(|d| d.name == device_name)
-                .map(|d| d.device),
+        let (device, enumeration_succeeded) = match list_input_devices() {
+            Ok(devices) => (
+                devices
+                    .into_iter()
+                    .find(|d| d.name == device_name)
+                    .map(|d| d.device),
+                true,
+            ),
             Err(e) => {
                 debug!("Failed to list devices, using default: {}", e);
-                None
+                (None, false)
             }
         };
         debug!(
@@ -1106,7 +522,36 @@ impl AudioRecordingManager {
         if let Some(d) = &device {
             *self.cached_device.lock().unwrap() = Some((device_name, d.clone()));
         }
-        device
+
+        let unavailable_selected_microphone = if enumeration_succeeded && device.is_none() {
+            selected_microphone
+        } else {
+            None
+        };
+        MicrophoneResolution {
+            device,
+            unavailable_selected_microphone,
+        }
+    }
+
+    /// Keep persisted settings and the UI aligned with a successful runtime
+    /// fallback. Re-read first so recovery cannot clear a microphone the user
+    /// selected concurrently while the stream was being rebuilt.
+    fn persist_default_microphone_after_fallback(&self, unavailable_name: &str) {
+        let mut settings = get_settings(&self.app_handle);
+        if settings.selected_microphone.as_deref() != Some(unavailable_name) {
+            return;
+        }
+
+        settings.selected_microphone = None;
+        write_settings(&self.app_handle, settings);
+        let _ = self.app_handle.emit(
+            "settings-changed",
+            serde_json::json!({
+                "setting": "selected_microphone",
+                "value": "Default"
+            }),
+        );
     }
 
     fn schedule_lazy_close(&self) {
@@ -1135,11 +580,12 @@ impl AudioRecordingManager {
 
     /* ---------- microphone life-cycle -------------------------------------- */
 
-    /// Applies the configured recording-time output adjustment while the
-    /// microphone stream is open. Full mute takes precedence over attenuation.
+    /// Applies mute if mute_while_recording is enabled and stream is open.
+    /// Snapshots the system's prior mute state first so `remove_mute` can
+    /// restore it instead of unconditionally unmuting.
     pub fn apply_mute(&self) {
         let settings = get_settings(&self.app_handle);
-        if !settings.mute_while_recording && settings.output_volume_reduction_percent == 0 {
+        if !settings.mute_while_recording {
             return;
         }
 
@@ -1149,39 +595,27 @@ impl AudioRecordingManager {
         // Already muted this session — don't re-snapshot, or a duplicate/late
         // apply would overwrite prev_muted with our own forced-muted state and
         // strand audio muted on stop.
-        if mute_guard.did_mute || mute_guard.volume_snapshot.is_some() {
+        if mute_guard.did_mute {
             return;
         }
         if *is_open {
-            if settings.mute_while_recording {
-                mute_guard.prev_muted = get_mute();
-                set_mute(true);
-                mute_guard.did_mute = true;
-                debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
-            } else {
-                mute_guard.volume_snapshot =
-                    reduce_output_volume(settings.output_volume_reduction_percent);
-                if mute_guard.volume_snapshot.is_some() {
-                    debug!(
-                        "Output volume reduced by {}%",
-                        settings.output_volume_reduction_percent
-                    );
-                } else {
-                    warn!("Could not reduce system output volume on this device");
-                }
-            }
+            mute_guard.prev_muted = get_mute();
+            set_mute(true);
+            mute_guard.did_mute = true;
+            debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
         }
     }
 
-    /// Restores whichever recording-time output adjustment was applied.
+    /// Removes mute if it was applied, restoring the system's prior mute state
+    /// (a system already muted before recording stays muted).
     pub fn remove_mute(&self) {
         let mut mute_guard = self.mute_state.lock().unwrap();
-        if mute_guard.did_mute || mute_guard.volume_snapshot.is_some() {
-            let previous_mute = mute_guard.prev_muted;
-            let restored_volume = mute_guard.volume_snapshot.is_some();
-            restore_output_adjustment(&mut mute_guard);
+        if mute_guard.did_mute {
+            restore_mute(mute_guard.prev_muted);
+            mute_guard.did_mute = false;
             debug!(
-                "Output adjustment removed (prev_muted={previous_mute:?}, restored_volume={restored_volume})"
+                "Mute removed (restored prev_muted={:?})",
+                mute_guard.prev_muted
             );
         }
     }
@@ -1189,17 +623,9 @@ impl AudioRecordingManager {
     pub fn preload_vad(&self) -> Result<(), anyhow::Error> {
         let mut recorder_opt = self.recorder.lock().unwrap();
         if recorder_opt.is_none() {
-            let vad_path = self
-                .app_handle
-                .path()
-                .resolve(
-                    "resources/models/silero_vad_v4.onnx",
-                    tauri::path::BaseDirectory::Resource,
-                )
-                .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {}", e))?;
             let settings = get_settings(&self.app_handle);
             *recorder_opt = Some(create_audio_recorder(
-                &vad_path,
+                settings.vad_backend,
                 &self.app_handle,
                 settings.selected_channel,
                 Arc::clone(&self.stream_router),
@@ -1212,19 +638,17 @@ impl AudioRecordingManager {
         let mut open_flag = self.is_open.lock().unwrap();
         if *open_flag {
             // `is_open` only records that we opened a stream at some point, not
-            // that one is still running. If the capture worker has since exited
-            // (mic unplugged mid-session, USB dropout), returning Ok here hands
-            // the caller a dead recorder: it captures nothing, then fails in
-            // stop() on the closed channel, and stays wedged until the
-            // on-demand close timeout eventually resets the manager.
-            let worker_dead = self
+            // that one is still running. If capture has since failed (mic
+            // unplugged mid-session, USB dropout), rebuild it before the next
+            // recording instead of handing the caller a stalled recorder.
+            let needs_reopen = self
                 .recorder
                 .lock()
                 .unwrap()
                 .as_ref()
-                .is_some_and(|rec| rec.is_capture_worker_dead());
+                .is_some_and(|rec| rec.needs_reopen());
 
-            if !worker_dead {
+            if !needs_reopen {
                 // trace, not debug: with the aliveness check in
                 // try_start_recording this now fires on every keypress in
                 // always-on mode.
@@ -1238,18 +662,19 @@ impl AudioRecordingManager {
             // takes the `is_open` lock we are already holding.
             {
                 let mut mute_guard = self.mute_state.lock().unwrap();
-                if mute_guard.did_mute || mute_guard.volume_snapshot.is_some() {
-                    restore_output_adjustment(&mut mute_guard);
+                if mute_guard.did_mute {
+                    restore_mute(mute_guard.prev_muted);
+                    mute_guard.did_mute = false;
                 }
             }
             if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
-                // Skipping rec.stop() here: the worker is gone, so the command
-                // would only fail on the closed channel.
                 let _ = rec.close();
             }
             *self.is_recording.lock().unwrap() = false;
             *open_flag = false;
-            // Fall through and open a fresh stream.
+            self.invalidate_device_cache();
+            // Fall through to the same fresh resolution and fallback path used
+            // when an on-demand stream opens after its device was unplugged.
         }
 
         let start_time = Instant::now();
@@ -1260,8 +685,9 @@ impl AudioRecordingManager {
         // flag, which would strand system audio muted.
         {
             let mut mute_guard = self.mute_state.lock().unwrap();
-            if mute_guard.did_mute || mute_guard.volume_snapshot.is_some() {
-                restore_output_adjustment(&mut mute_guard);
+            if mute_guard.did_mute {
+                restore_mute(mute_guard.prev_muted);
+                mute_guard.did_mute = false;
             }
         }
 
@@ -1272,7 +698,7 @@ impl AudioRecordingManager {
         // "No input device found" error this used to check for.
         let settings = get_settings(&self.app_handle);
         let resolve_started = Instant::now();
-        let selected_device = self.get_effective_microphone_device(&settings);
+        let mut resolution = self.resolve_microphone_device(&settings);
         let resolve_elapsed = resolve_started.elapsed();
 
         // Ensure VAD is loaded if it wasn't for whatever reason
@@ -1283,14 +709,14 @@ impl AudioRecordingManager {
         let open_started = Instant::now();
         let mut recorder_opt = self.recorder.lock().unwrap();
         if let Some(rec) = recorder_opt.as_mut() {
-            if let Err(first_err) = rec.open(selected_device.clone()) {
+            if let Err(first_err) = rec.open(resolution.device.clone()) {
                 // A cached device or config may have gone stale (unplugged,
                 // rate/format changed). Re-resolve from a fresh enumeration and
                 // retry once before surfacing the error.
                 warn!("Recorder open failed ({first_err}); re-resolving device and retrying once");
                 self.invalidate_device_cache();
-                let fresh_device = self.get_effective_microphone_device(&settings);
-                rec.open(fresh_device)
+                resolution = self.resolve_microphone_device(&settings);
+                rec.open(resolution.device.clone())
                     .map_err(|e| anyhow::anyhow!("Failed to open recorder: {}", e))?;
             }
         }
@@ -1300,8 +726,14 @@ impl AudioRecordingManager {
             vad_elapsed,
             open_started.elapsed()
         );
+        drop(recorder_opt);
 
         *open_flag = true;
+        if let Some(unavailable_name) = resolution.unavailable_selected_microphone {
+            // Do this only after the default stream opened successfully. A
+            // failed fallback must not erase the user's microphone preference.
+            self.persist_default_microphone_after_fallback(&unavailable_name);
+        }
         // This timing covers through cpal's stream.play() returning — i.e. the
         // point cpal surfaces as "stream running." It does NOT guarantee the
         // host audio device is producing samples yet; the first input callback
@@ -1322,7 +754,10 @@ impl AudioRecordingManager {
 
         {
             let mut mute_guard = self.mute_state.lock().unwrap();
-            restore_output_adjustment(&mut mute_guard);
+            if mute_guard.did_mute {
+                restore_mute(mute_guard.prev_muted);
+            }
+            mute_guard.did_mute = false;
         }
 
         if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
@@ -1382,7 +817,7 @@ impl AudioRecordingManager {
         &self,
         binding_id: &str,
         vad_policy: VadPolicy,
-    ) -> Result<(), String> {
+    ) -> Result<RecordingReadiness, String> {
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {
@@ -1401,22 +836,83 @@ impl AudioRecordingManager {
             }
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                if rec.start(vad_policy).is_ok() {
-                    *self.is_recording.lock().unwrap() = true;
-                    self.set_state(
-                        &mut state,
-                        RecordingState::Recording {
-                            binding_id: binding_id.to_string(),
-                        },
-                    );
-                    debug!("Recording started for binding {binding_id}");
-                    return Ok(());
+                match rec.start(vad_policy) {
+                    Ok(receiver) => {
+                        let generation = self.capture_generation.fetch_add(1, Ordering::AcqRel) + 1;
+                        *self.is_recording.lock().unwrap() = true;
+                        self.set_state(
+                            &mut state,
+                            RecordingState::Recording {
+                                binding_id: binding_id.to_string(),
+                            },
+                        );
+                        debug!("Recording requested for binding {binding_id}");
+                        return Ok(RecordingReadiness {
+                            receiver,
+                            generation,
+                        });
+                    }
+                    Err(error) => return Err(format!("Failed to start recorder: {error}")),
                 }
             }
             Err("Recorder not available".to_string())
         } else {
             Err("Already recording".to_string())
         }
+    }
+
+    /// Replace the VAD implementation while idle. If the microphone stream is
+    /// currently warm (always-on or lazy-close mode), reopen it with the new
+    /// detector before reporting success. A failed reopen restores the previous
+    /// recorder so the persisted setting can remain unchanged.
+    pub fn update_vad_backend(&self, backend: VadBackend) -> Result<(), anyhow::Error> {
+        let state = self.state.lock().unwrap();
+        if !matches!(*state, RecordingState::Idle) {
+            return Err(anyhow::anyhow!(
+                "Cannot change the VAD backend while recording"
+            ));
+        }
+
+        let settings = get_settings(&self.app_handle);
+        let replacement = create_audio_recorder(
+            backend,
+            &self.app_handle,
+            settings.selected_channel,
+            Arc::clone(&self.stream_router),
+        )?;
+        let was_open = *self.is_open.lock().unwrap();
+
+        // Invalidate any delayed close before swapping the recorder it targets.
+        self.close_generation.fetch_add(1, Ordering::SeqCst);
+        if was_open {
+            self.stop_microphone_stream();
+        }
+
+        let previous_recorder = self.recorder.lock().unwrap().replace(replacement);
+        if was_open {
+            if let Err(change_error) = self.start_microphone_stream() {
+                // Ensure a partially opened replacement cannot retain capture
+                // resources before restoring the known-good detector.
+                if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
+                    let _ = recorder.close();
+                }
+                *self.recorder.lock().unwrap() = previous_recorder;
+
+                if let Err(rollback_error) = self.start_microphone_stream() {
+                    error!(
+                        "Failed to restore microphone stream after VAD backend change failed: {rollback_error}"
+                    );
+                }
+                return Err(anyhow::anyhow!(
+                    "Failed to reopen microphone with {:?} VAD: {change_error}",
+                    backend
+                ));
+            }
+        }
+
+        info!("VAD backend changed to {:?}", backend);
+        drop(state);
+        Ok(())
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
@@ -1466,6 +962,16 @@ impl AudioRecordingManager {
         Ok(())
     }
 
+    /// Invalidate pending first-sample UI and audio-feedback work immediately.
+    /// Called at the beginning of stop, before the slower capture drain starts.
+    pub fn invalidate_recording_readiness(&self) {
+        self.capture_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub fn is_recording_readiness_current(&self, generation: u64) -> bool {
+        self.capture_generation.load(Ordering::Acquire) == generation
+    }
+
     pub fn cancel_generation(&self) -> u64 {
         self.cancel_generation.load(Ordering::Acquire)
     }
@@ -1475,6 +981,7 @@ impl AudioRecordingManager {
     }
 
     pub fn stop_recording(&self, binding_id: &str, cancel_generation: u64) -> Option<Vec<f32>> {
+        self.invalidate_recording_readiness();
         let mut state = self.state.lock().unwrap();
 
         match *state {
@@ -1561,6 +1068,7 @@ impl AudioRecordingManager {
 
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
+        self.invalidate_recording_readiness();
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();
 
@@ -1589,77 +1097,5 @@ impl AudioRecordingManager {
             }
             RecordingState::Idle => {}
         }
-    }
-}
-
-#[cfg(test)]
-mod output_volume_tests {
-    use super::*;
-
-    #[test]
-    fn attenuation_is_relative_to_the_current_volume() {
-        assert!((attenuated_volume(0.8, 25) - 0.6).abs() < f32::EPSILON);
-        assert!((attenuated_volume(0.5, 50) - 0.25).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn attenuation_clamps_the_percentage() {
-        assert_eq!(attenuated_volume(0.8, 0), 0.8);
-        assert_eq!(attenuated_volume(0.8, 100), 0.0);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_volume_parser_accepts_pactl_and_amixer_formats() {
-        assert_eq!(
-            parse_first_percentage("Volume: front-left: 50 / 63% /"),
-            Some(0.63)
-        );
-        assert_eq!(
-            parse_first_percentage("Mono: Playback 48 [48%] [on]"),
-            Some(0.48)
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_pipewire_graph_builds_runtime_link_plan() {
-        let output = br#"[
-            {"id":75,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"default_sink"}}},
-            {"id":145,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"duck_sink"}}},
-            {"id":137,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"duck_output"}}},
-            {"id":153,"type":"PipeWire:Interface:Node","info":{"props":{"node.name":"Brave"}}},
-            {"id":40,"type":"PipeWire:Interface:Port","info":{"props":{"node.id":153,"audio.channel":"FL","port.name":"output_FL"}}},
-            {"id":114,"type":"PipeWire:Interface:Port","info":{"props":{"node.id":153,"audio.channel":"FR","port.name":"output_FR"}}},
-            {"id":67,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":75,"audio.channel":"FL","port.name":"playback_FL"}}},
-            {"id":66,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":75,"audio.channel":"FR","port.name":"playback_FR"}}},
-            {"id":138,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":145,"audio.channel":"FL","port.name":"playback_FL"}}},
-            {"id":134,"type":"PipeWire:Interface:Port","info":{"direction":"input","props":{"node.id":145,"audio.channel":"FR","port.name":"playback_FR"}}},
-            {"id":116,"type":"PipeWire:Interface:Link","info":{"output-node-id":153,"output-port-id":40,"input-node-id":75,"input-port-id":67}},
-            {"id":89,"type":"PipeWire:Interface:Link","info":{"output-node-id":153,"output-port-id":114,"input-node-id":75,"input-port-id":66}},
-            {"id":92,"type":"PipeWire:Interface:Link","info":{"output-node-id":137,"output-port-id":146,"input-node-id":75,"input-port-id":67}}
-        ]"#;
-        assert_eq!(
-            pipewire_ducking_plan(output, "default_sink", "duck_sink", "duck_output"),
-            Some((
-                137,
-                vec![
-                    LinuxDuckedLink {
-                        output_port: "Brave:output_FL".to_owned(),
-                        original_input_port: "default_sink:playback_FL".to_owned(),
-                        duck_input_port: "duck_sink:playback_FL".to_owned(),
-                    },
-                    LinuxDuckedLink {
-                        output_port: "Brave:output_FR".to_owned(),
-                        original_input_port: "default_sink:playback_FR".to_owned(),
-                        duck_input_port: "duck_sink:playback_FR".to_owned(),
-                    }
-                ]
-            ))
-        );
-        assert_eq!(
-            pipewire_ducking_plan(b"", "default_sink", "duck_sink", "duck_output"),
-            None
-        );
     }
 }

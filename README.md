@@ -21,7 +21,7 @@ simply hidden from the Models page.
 
 | Project fact       | Details                                                                               |
 | ------------------ | ------------------------------------------------------------------------------------- |
-| Current release    | [`0.9.5-popos.1`](docs/releases/0.9.5-popos.1.md)                                     |
+| Current release    | [`0.9.7-popos.1`](docs/releases/0.9.7-popos.1.md)                                     |
 | Primary platform   | Pop!\_OS 24.04 on x86_64                                                              |
 | Ubuntu support     | Ubuntu 24.04 LTS expected compatible; GNOME Wayland QA pending                        |
 | Desktop support    | COSMIC Wayland tested; best-effort support for GNOME and other Linux desktops         |
@@ -103,12 +103,12 @@ display. This version addresses those Linux-specific problems directly.
 The recommended installation method is the Debian package attached to the
 [latest Handy Pop!\_OS release](https://github.com/iamwaqargulzar/Handy-Pop-OS/releases/latest).
 
-1. Download `Handy_0.9.5_amd64.deb` from the release page.
+1. Download `Handy_0.9.7_amd64.deb` from the release page.
 2. Open a terminal in the download directory.
 3. Install the package and its declared dependencies:
 
    ```bash
-   sudo apt install ./Handy_0.9.5_amd64.deb
+   sudo apt install ./Handy_0.9.7_amd64.deb
    ```
 
 4. Allow the low-level shortcut listener to read Linux input devices:
@@ -266,7 +266,7 @@ bun run tauri build --bundles deb --no-sign
 The Debian package is generated at:
 
 ```text
-src-tauri/target/release/bundle/deb/Handy_0.9.5_amd64.deb
+src-tauri/target/release/bundle/deb/Handy_0.9.7_amd64.deb
 ```
 
 Local release builds use `--no-sign` because the public updater key does not
@@ -274,7 +274,7 @@ include the corresponding private signing key.
 
 ## Tested environment and verification
 
-The `0.9.5-popos.1` source and package were verified on Pop!\_OS 24.04 with
+The `0.9.7-popos.1` source and package were verified on Pop!\_OS 24.04 with
 COSMIC Wayland, PipeWire, WirePlumber, multiple displays, and an x86_64 system.
 The latest checkpoint passed:
 
@@ -383,6 +383,7 @@ behavior. New versions must be installed deliberately from this repository.
 ## Documentation
 
 - [Pop!\_OS build and deployment guide](LINUX.md)
+- [Handy Pop!\_OS 0.9.7-popos.1 release notes](docs/releases/0.9.7-popos.1.md)
 - [Handy Pop!\_OS 0.9.5-popos.1 release notes](docs/releases/0.9.5-popos.1.md)
 - [Technical handover and verified behavior](HANDOVER.md)
 - [Volume-reduction design and crash recovery](docs/2026-08-10-v0.9.5-volume-reduction.md)

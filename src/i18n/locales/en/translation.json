@@ -125,8 +125,6 @@
     "legacy": "Legacy",
     "streaming": "Streaming",
     "active": "Active",
-    "modelHotkey": "Hotkey:",
-    "modelHotkeyDescription": "Assign a global hotkey to instantly switch to this model",
     "switching": "Switching...",
     "noModelsAvailable": "No models available",
     "verifying": "Verifying {{modelName}}...",
@@ -146,14 +144,6 @@
     "downloadSpeed": "{{speed}} MB/s",
     "cancel": "Cancel",
     "cancelDownload": "Cancel download",
-    "npuLoading": {
-      "title": "Loading model on Intel NPU",
-      "description": "Preparing {{modelName}}",
-      "explanation": "The first load is a one-time compilation for this model and OpenVINO version. Handy stores the compiled NPU cache locally, so later loads reuse it and are substantially faster.",
-      "progressLabel": "Loading NPU model",
-      "waitMessage": "Please keep Handy open. Cached loads still need a few seconds to read the model and allocate memory.",
-      "closeLabel": "Close model loading message"
-    },
     "capabilities": {
       "languageSelection": "Supports multiple input languages",
       "singleLanguage": "Supports this language only",
@@ -162,6 +152,16 @@
       "translation": "Can translate to English",
       "translate": "Translate",
       "streaming": "Shows live transcription as you speak"
+    },
+    "modelHotkey": "Hotkey:",
+    "modelHotkeyDescription": "Assign a global hotkey to instantly switch to this model",
+    "npuLoading": {
+      "title": "Loading model on Intel NPU",
+      "description": "Preparing {{modelName}}",
+      "explanation": "The first load is a one-time compilation for this model and OpenVINO version. Handy stores the compiled NPU cache locally, so later loads reuse it and are substantially faster.",
+      "progressLabel": "Loading NPU model",
+      "waitMessage": "Please keep Handy open. Cached loads still need a few seconds to read the model and allocate memory.",
+      "closeLabel": "Close model loading message"
     }
   },
   "settings": {
@@ -203,6 +203,20 @@
         "searchPlaceholder": "Search languages...",
         "noResults": "No languages found",
         "auto": "Auto"
+      },
+      "shortcutActivation": {
+        "title": "Shortcut Behavior",
+        "description": "Choose how the transcribe shortcut starts and stops recording.",
+        "options": {
+          "holdOrToggle": "Auto",
+          "pushToTalk": "Hold",
+          "toggle": "Toggle"
+        },
+        "descriptions": {
+          "hold_or_toggle": "Hold to record or tap to toggle",
+          "push_to_talk": "Records while you hold the shortcut",
+          "toggle": "Tap the shortcut to start recording, tap again to stop"
+        }
       },
       "pushToTalk": {
         "label": "Push To Talk",
@@ -387,6 +401,18 @@
       "voiceActivityDetection": {
         "title": "Voice Activity Detection",
         "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
+      "vadBackend": {
+        "title": "Voice Activity Backend",
+        "description": "Choose the detector used to filter silence. Earshot is experimental; switch back to Silero if speech is clipped or noise is retained.",
+        "options": {
+          "silero": "Silero",
+          "earshot": "Earshot"
+        }
+      },
+      "fillerWordRemoval": {
+        "title": "Remove Filler Words",
+        "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
       }
     },
     "postProcessing": {
@@ -496,7 +522,8 @@
       },
       "updateChecks": {
         "label": "Check for Updates",
-        "description": "Automatically check for new versions of Handy"
+        "description": "Automatically check for new versions of Handy",
+        "lockedDescription": "Disabled by system configuration (HANDY_DISABLE_UPDATER)"
       },
       "whatsNewPreview": {
         "title": "Preview What's New",
@@ -504,6 +531,13 @@
         "button": "Preview",
         "noNotes": "No bundled release notes found",
         "error": "Failed to preview release notes"
+      },
+      "onboardingPreview": {
+        "title": "Preview Onboarding",
+        "description": "Preview onboarding screens without changing permissions, models, or completion state",
+        "permissionsButton": "Permissions",
+        "modelsButton": "Model Selection",
+        "exitButton": "Exit Preview"
       },
       "soundTheme": {
         "label": "Sound Theme",
@@ -544,10 +578,6 @@
         "label": "Mute While Recording",
         "description": "Mute system audio during recording"
       },
-      "lowerVolumeWhileRecording": {
-        "label": "Lower Volume While Recording",
-        "description": "Reduce the current system output volume by this percentage while recording, then restore it afterward. Set to 0% to disable. Full mute takes precedence."
-      },
       "appendTrailingSpace": {
         "label": "Append Trailing Space",
         "description": "Add a space after pasted transcription"
@@ -569,6 +599,10 @@
       "pasteDelayAfter": {
         "title": "Paste Delay (After)",
         "description": "Delay (in milliseconds) after the paste keystroke, before restoring your previous clipboard. Increase if your old clipboard content is being pasted instead of the transcription."
+      },
+      "holdThreshold": {
+        "title": "Hold Threshold",
+        "description": "Auto mode only: how long (in milliseconds) the shortcut must be held before it counts as a hold instead of a tap. Lower if short holds keep leaving recording on; raise if deliberate taps get treated as holds."
       },
       "reliablePaste": {
         "title": "Reliable Paste (Beta)",
@@ -597,6 +631,10 @@
         "verdictOk": "Key events are reaching Handy normally.",
         "verdictNoEvents": "No events captured — did you press any keys during the test?",
         "failed": "Diagnostic failed: {{error}}"
+      },
+      "lowerVolumeWhileRecording": {
+        "label": "Lower Volume While Recording",
+        "description": "Reduce the current system output volume by this percentage while recording, then restore it afterward. Set to 0% to disable. Full mute takes precedence."
       }
     },
     "about": {
@@ -696,10 +734,10 @@
     }
   },
   "overlay": {
-    "live": "Live",
-    "recording": "Recording",
     "transcribing": "Transcribing...",
-    "processing": "Processing..."
+    "processing": "Processing...",
+    "live": "Live",
+    "recording": "Recording"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} may be blocking 1 shortcut",

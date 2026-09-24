@@ -1,5 +1,27 @@
 # Handy Pop!\_OS Handover
 
+## 2026-09-24 — upstream 0.9.7 integration
+
+The current release line is `0.9.7-popos.1`. It integrates upstream Handy
+0.9.6 and 0.9.7 while preserving this fork's overlay, dark/blue interface,
+tray, output-volume reduction, dynamic model shortcuts, post-processing
+fallbacks, Vulkan support, and optional Intel OpenVINO NPU pipeline.
+
+The release package is `Handy_0.9.7_amd64.deb`. OpenVINO model files and
+compiled caches remain user data and are not embedded in the Debian package.
+Linux update checks remain forced off. The public repository policy is one
+branch only: `main`.
+
+Detailed release behavior is recorded in
+`docs/releases/0.9.7-popos.1.md`; the older sections below remain as historical
+implementation and recovery notes.
+
+Validation completed for this release: frontend build and lint, formatting,
+275 Rust unit tests, Debian package inspection, CPU transcription, Vulkan
+transcription, and NPU transcription with Whisper Large v3 INT8, Qwen3-ASR
+1.7B INT8, and Parakeet TDT v3. The package SHA-256 is
+`91d78b5b5c6df90787ff066cef58efbf350aded35199f3367a89d136aff9c0e3`.
+
 ## OpenVINO NPU integration outcome (2026-08-13)
 
 The Linux OpenVINO work remains isolated on `codex/openvino-gate1`. Full Whisper Large V3 INT8
