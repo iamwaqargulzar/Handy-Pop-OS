@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -37,17 +38,29 @@ using json = nlohmann::json;
 constexpr std::uint32_t kProtocolVersion = 1;
 constexpr std::uint32_t kMaxJsonBytes = 1024 * 1024;
 constexpr std::size_t kMaxAudioBytes = 30ULL * 60 * 16000 * sizeof(float);
-constexpr const char* kOpenVinoCacheVersion = "openvino-2026.3";
+constexpr const char* kOpenVinoCacheVersion = "openvino-2026.4";
 
 class Qwen3AsrNpu {
   public:
     Qwen3AsrNpu(const std::filesystem::path& path, const std::filesystem::path& cache)
         : model_dir_(path), feature_extractor_(path / "preprocessor_config.json"),
           tokenizer_(path, ov::AnyMap{{"CACHE_DIR", (cache / "tokenizer").string()}}) {
+        const auto marker = json::parse(std::ifstream(path / "handy_qwen_npu.json"));
+        hidden_size_ = marker.value("hidden_size", 2048U);
+        feature_size_ = marker.value("feature_size", 128U);
+        chunk_frames_ = marker.value("encoder_chunk_frames", 100U);
+        encoder_tokens_per_chunk_ = marker.value("encoder_tokens_per_chunk", 13U);
+        max_prompt_tokens_ = marker.value("max_prompt_tokens", 1024U);
+        if ((hidden_size_ != 1024 && hidden_size_ != 2048) || feature_size_ != 128 ||
+            chunk_frames_ != 100 || encoder_tokens_per_chunk_ != 13 ||
+            max_prompt_tokens_ != 1024) {
+            throw std::runtime_error("unsupported Handy Qwen NPU model metadata");
+        }
         ov::Core core;
 
         auto encoder_model = core.read_model(path / "openvino_encoder_model.xml");
-        encoder_model->reshape({{"input_features", ov::PartialShape{1, 128, 100}}});
+        encoder_model->reshape(
+            {{"input_features", ov::PartialShape{1, feature_size_, chunk_frames_}}});
         encoder_ = core.compile_model(
             encoder_model, "NPU",
             ov::AnyMap{{"CACHE_DIR", (cache / "encoder").string()},
@@ -58,7 +71,7 @@ class Qwen3AsrNpu {
             ov::AnyMap{{"CACHE_DIR", (cache / "embeddings").string()}}).create_infer_request();
 
         auto decoder_model = core.read_model(path / "openvino_decoder_model.xml");
-        decoder_model->reshape({{"inputs_embeds", ov::PartialShape{1, -1, 2048}},
+        decoder_model->reshape({{"inputs_embeds", ov::PartialShape{1, -1, hidden_size_}},
                                 {"attention_mask", ov::PartialShape{1, -1}},
                                 {"position_ids", ov::PartialShape{1, -1}}});
         decoder_ = core.compile_model(
@@ -67,7 +80,7 @@ class Qwen3AsrNpu {
                        {"NPUW_LLM", "YES"},
                        {"NPUW_LLM_BATCH_DIM", 0},
                        {"NPUW_LLM_SEQ_LEN_DIM", 2},
-                       {"NPUW_LLM_MAX_PROMPT_LEN", 1024},
+                       {"NPUW_LLM_MAX_PROMPT_LEN", max_prompt_tokens_},
                        {"NPUW_LLM_MIN_RESPONSE_LEN", 256},
                        {"NPUW_LLM_PREFILL_HINT", "STATIC"},
                        {"CACHE_DIR", (cache / "decoder").string()},
@@ -75,48 +88,49 @@ class Qwen3AsrNpu {
     }
 
     std::string transcribe(const std::vector<float>& audio, const std::string& language) {
-        constexpr std::size_t chunk_frames = 100;
-        constexpr std::size_t encoder_tokens_per_chunk = 13;
-        constexpr std::size_t hidden_size = 2048;
-        constexpr std::size_t vocab_size = 151936;
         constexpr std::size_t max_new_tokens = 256;
-        constexpr int64_t audio_token_id = 151676;
         constexpr int64_t eos_token_id = 151643;
         constexpr int64_t im_end_token_id = 151645;
 
         std::cerr << "Qwen NPU: extracting features\n";
         const auto features = feature_extractor_.extract(audio, false);
         if (features.n_frames == 0) return {};
-        const std::size_t chunk_count = (features.n_frames + chunk_frames - 1) / chunk_frames;
-        const std::size_t remainder = features.n_frames % chunk_frames;
+        if (features.feature_size != feature_size_)
+            throw std::runtime_error("Qwen feature extractor does not match model metadata");
+        const std::size_t chunk_count = (features.n_frames + chunk_frames_ - 1) / chunk_frames_;
+        const std::size_t remainder = features.n_frames % chunk_frames_;
         const std::size_t final_tokens = remainder == 0
-            ? encoder_tokens_per_chunk
-            : (remainder * encoder_tokens_per_chunk + chunk_frames - 1) / chunk_frames;
-        const std::size_t audio_tokens = (chunk_count - 1) * encoder_tokens_per_chunk + final_tokens;
-        if (audio_tokens + 32 > 1024)
+            ? encoder_tokens_per_chunk_
+            : (remainder * encoder_tokens_per_chunk_ + chunk_frames_ - 1) / chunk_frames_;
+        const std::size_t audio_tokens =
+            (chunk_count - 1) * encoder_tokens_per_chunk_ + final_tokens;
+        if (audio_tokens + 32 > max_prompt_tokens_)
             throw std::runtime_error("Qwen audio is too long for the 30-second NPU prompt window");
 
         std::cerr << "Qwen NPU: encoding " << features.n_frames << " frames into " << audio_tokens << " tokens\n";
-        ov::Tensor hidden(ov::element::f32, {1, audio_tokens, hidden_size});
+        ov::Tensor hidden(ov::element::f32, {1, audio_tokens, hidden_size_});
         float* hidden_out = hidden.data<float>();
         for (std::size_t chunk = 0; chunk < chunk_count; ++chunk) {
-            ov::Tensor input(ov::element::f32, {1, features.feature_size, chunk_frames});
-            std::fill_n(input.data<float>(), features.feature_size * chunk_frames, 0.0f);
-            const std::size_t frame_start = chunk * chunk_frames;
-            const std::size_t frames = std::min(chunk_frames, features.n_frames - frame_start);
-            for (std::size_t mel = 0; mel < features.feature_size; ++mel) {
-                std::memcpy(input.data<float>() + mel * chunk_frames,
+            ov::Tensor input(ov::element::f32, {1, feature_size_, chunk_frames_});
+            std::fill_n(input.data<float>(), feature_size_ * chunk_frames_, 0.0f);
+            const std::size_t frame_start = chunk * chunk_frames_;
+            const std::size_t frames =
+                std::min(chunk_frames_, features.n_frames - frame_start);
+            for (std::size_t mel = 0; mel < feature_size_; ++mel) {
+                std::memcpy(input.data<float>() + mel * chunk_frames_,
                             features.data.data() + mel * features.n_frames + frame_start,
                             frames * sizeof(float));
             }
             encoder_.set_tensor("input_features", input);
-            ov::Tensor encoded_host(ov::element::f32, {1, encoder_tokens_per_chunk, hidden_size});
+            ov::Tensor encoded_host(
+                ov::element::f32, {1, encoder_tokens_per_chunk_, hidden_size_});
             encoder_.set_tensor("last_hidden_state", encoded_host);
             encoder_.infer();
             const ov::Tensor encoded = encoder_.get_tensor("last_hidden_state");
-            const std::size_t keep = chunk + 1 == chunk_count ? final_tokens : encoder_tokens_per_chunk;
-            std::memcpy(hidden_out + chunk * encoder_tokens_per_chunk * hidden_size,
-                        encoded.data<const float>(), keep * hidden_size * sizeof(float));
+            const std::size_t keep =
+                chunk + 1 == chunk_count ? final_tokens : encoder_tokens_per_chunk_;
+            std::memcpy(hidden_out + chunk * encoder_tokens_per_chunk_ * hidden_size_,
+                        encoded.data<const float>(), keep * hidden_size_ * sizeof(float));
         }
 
         std::string prompt = "<|im_start|>system\n<|im_end|>\n<|im_start|>user\n"
@@ -134,7 +148,7 @@ class Qwen3AsrNpu {
         embeddings_.infer();
         const std::size_t prompt_length = input_ids.get_shape().at(1);
         const ov::Tensor prompt_embeddings = embeddings_.get_output_tensor();
-        ov::Tensor current_embeddings(ov::element::f32, {1, prompt_length, hidden_size});
+        ov::Tensor current_embeddings(ov::element::f32, {1, prompt_length, hidden_size_});
         std::memcpy(current_embeddings.data<float>(), prompt_embeddings.data<const float>(),
                     current_embeddings.get_byte_size());
 
@@ -183,7 +197,7 @@ class Qwen3AsrNpu {
             embeddings_.set_tensor("encoder_hidden_states", hidden);
             embeddings_.infer();
             const ov::Tensor next_embeddings = embeddings_.get_output_tensor();
-            current_embeddings = ov::Tensor(ov::element::f32, {1, 1, hidden_size});
+            current_embeddings = ov::Tensor(ov::element::f32, {1, 1, hidden_size_});
             std::memcpy(current_embeddings.data<float>(), next_embeddings.data<const float>(),
                         current_embeddings.get_byte_size());
         }
@@ -218,6 +232,11 @@ class Qwen3AsrNpu {
     ov::InferRequest encoder_;
     ov::InferRequest embeddings_;
     ov::InferRequest decoder_;
+    std::size_t hidden_size_ = 2048;
+    std::size_t feature_size_ = 128;
+    std::size_t chunk_frames_ = 100;
+    std::size_t encoder_tokens_per_chunk_ = 13;
+    std::size_t max_prompt_tokens_ = 1024;
 };
 
 std::filesystem::path model_cache_dir(const std::filesystem::path& model_dir) {

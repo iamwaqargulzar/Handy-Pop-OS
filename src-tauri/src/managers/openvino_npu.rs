@@ -35,7 +35,7 @@ impl OpenVinoNpuEngine {
         let library_path = private_library_path(&worker_path);
         command
             .arg(&socket_path)
-            // OpenVINO 2026.3's compatibility allocation path is the verified
+            // OpenVINO 2026.4's compatibility allocation path is the verified
             // route for full Large V3 on the tested Lunar Lake driver.
             .env("DISABLE_OPENVINO_GENAI_NPU_L0", "1")
             .env("LD_LIBRARY_PATH", library_path)

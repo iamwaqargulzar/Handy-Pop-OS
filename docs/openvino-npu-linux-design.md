@@ -185,7 +185,7 @@ group access. The tested compatibility setting was
 `DISABLE_OPENVINO_GENAI_NPU_L0=1`.
 
 Release builds set four explicit native inputs: `HANDY_OPENVINO_GENAI_ROOT`
-(the pinned 2026.3 SDK/runtime), `HANDY_OPENVINO_GENAI_SOURCE` (the matching
+(the pinned 2026.4 SDK/runtime), `HANDY_OPENVINO_GENAI_SOURCE` (the matching
 GenAI source tree used only to compile its Apache-2.0 Whisper feature extractor),
 `HANDY_NPU_LEVEL_ZERO_LIB`, and `HANDY_LEVEL_ZERO_LOADER_LIB`. Headers and
 source files are build inputs only; the Debian package receives only the worker
@@ -282,6 +282,14 @@ local Core Ultra 9 288V: model load reported `actual_device: NPU`, the 11-second
 JFK sample completed in 2.037 seconds with the expected full transcript, and
 shutdown completed normally. INT4 compiles and runs on NPU but remains labelled
 as an accuracy tradeoff rather than an equivalent-quality default.
+
+The OpenVINO 2026.4 integration generalizes the Qwen marker format with model
+dimensions instead of hardcoding the 1.7B hidden size. Qwen3-ASR 0.6B INT8 and
+INT4 use the identical NPU-only execution boundary and both pass native worker
+reference transcription. See
+`docs/2026-09-24-openvino-2026.4-model-research.md` for measurements, immutable
+model revisions, rejected candidates, and the distinction between export
+support and verified NPU support.
 
 The final installed-package regression additionally covers model switching and
 all three downloadable NPU families. Worker sockets include a per-process

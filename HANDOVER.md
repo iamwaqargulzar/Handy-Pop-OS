@@ -117,7 +117,7 @@ lifecycle and applies to selections from both model-selection interfaces.
 
 OpenVINO's persistent compiled-model cache is enabled for every NPU model. The
 cache lives below each downloaded model at
-`.handy-npu-cache/openvino-2026.3`, so different models and runtime versions do
+`.handy-npu-cache/openvino-2026.4`, so different models and runtime versions do
 not collide and deleting a model also deletes its cache. A real Whisper Large
 V3 INT8 measurement improved from 169.968 seconds for the first compilation to
 7.629 seconds for the cached reload (about 22 times faster). Its weightless
@@ -194,7 +194,7 @@ by a deliberately narrow A-punctuation-A duplicate suppression rule; a broad
 repetition penalty was tested and rejected because it altered legitimate text.
 The decoder uses a 1,024-token prompt bucket (approximately the model's
 30-second ASR window) and a 256-token response allowance. Compiled blobs use the
-same per-model OpenVINO 2026.3 cache as Whisper and Parakeet.
+same versioned per-model OpenVINO cache as Whisper and Parakeet.
 
 The final Debian package was installed over Handy 0.9.5 on 2026-08-13. The
 worker at `/usr/lib/Handy/handy-openvino-npu` then loaded the INT8 model on NPU
@@ -226,6 +226,22 @@ Local model paths:
 ~/.local/share/com.pais.handy/models/handy-qwen3-asr-1.7b-int8-npu
 ~/.local/share/com.pais.handy/models/handy-qwen3-asr-1.7b-int4-npu
 ```
+
+OpenVINO 2026.4 work adds Qwen3-ASR 0.6B INT8 and INT4 to the same generalized
+static pipeline. The worker now reads model dimensions from
+`handy_qwen_npu.json` while retaining safe defaults for the existing 1.7B
+format. Both 0.6B variants compiled on NPU and produced the correct JFK
+reference transcript: INT8 in 1.097 seconds after an 8.785-second warm load,
+and INT4 in 1.119 seconds after a 13.338-second warm load. Their immutable
+Hugging Face revisions are pinned in the catalog; weights remain on-demand and
+do not increase the installer.
+
+The wider 2026.4 investigation is recorded in
+`docs/2026-09-24-openvino-2026.4-model-research.md`. Fun-ASR, Parakeet TDT-CTC
+110M, Nemotron Streaming, Canary, Granite Speech, and SenseVoice were not
+misrepresented as supported NPU models. The Parakeet 110M graph did compile on
+NPU as a topology experiment, but its untrusted community export and missing
+exact native feature extractor keep it out of the release catalog.
 
 Last verified: 2026-08-13 (Asia/Karachi)
 

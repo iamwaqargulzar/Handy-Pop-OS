@@ -174,13 +174,14 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## OpenVINO NPU build inputs
 
-The Linux package uses OpenVINO Runtime 2026.3.0, OpenVINO GenAI 2026.3.0.0,
+The Linux package uses OpenVINO Runtime 2026.4.0, OpenVINO GenAI 2026.4.0.0,
 Intel NPU user-mode driver 1.35.0, and Level Zero loader 1.32.0. These are build
 inputs, not global development dependencies on the destination machine. Keep
 their extracted trees outside the repository and provide these paths:
 
 ```bash
-export HANDY_OPENVINO_GENAI_ROOT=/path/to/openvino_genai_ubuntu24_2026.3.0.0_x86_64
+export HANDY_OPENVINO_GENAI_ROOT=/path/to/openvino_genai_ubuntu24_2026.4.0.0_x86_64
+export HANDY_OPENVINO_GENAI_SOURCE=/path/to/openvino.genai-2026.4.0.0
 export HANDY_NPU_LEVEL_ZERO_LIB=/path/to/libze_intel_npu.so.1.35.0
 export HANDY_LEVEL_ZERO_LOADER_LIB=/path/to/libze_loader.so.1.32.0
 ```
@@ -222,6 +223,14 @@ Handy starts `/usr/lib/Handy/handy-openvino-npu` with its private libraries and
 worker enumerates `NPU`. The worker may also enumerate `CPU` because
 ASRPipeline needs the CPU plug-in during initialization, but model creation is
 explicitly `ASRPipeline(..., "NPU")`; it never labels a CPU/GPU fallback as NPU.
+
+The NPU catalog also includes Handy's verified Qwen3-ASR 1.7B and 0.6B split
+formats plus Parakeet TDT V3. These are downloaded only when selected. Qwen's
+speech encoder and autoregressive decoder run on NPU; CPU handles only feature,
+tokenizer, prompt-embedding, and token-selection glue. The smaller 0.6B model
+is available in INT8 and INT4, with INT4 clearly marked as an accuracy/size
+tradeoff. Systems without a supported Intel NPU do not see these entries and
+continue to use Handy's conventional engines normally.
 
 The first model load compiles the graph and can take roughly 2.5 minutes. The
 verified extracted-package run loaded in 166.769 seconds and transcribed the

@@ -41,7 +41,7 @@ fn main() {
     tauri_build::build()
 }
 
-/// Build and stage the isolated OpenVINO 2026.3 Intel NPU worker.
+/// Build and stage the isolated OpenVINO 2026.4 Intel NPU worker.
 ///
 /// The build inputs are explicit so normal Handy builds remain possible without
 /// a system-wide OpenVINO SDK. Release builds set all three variables to
@@ -124,15 +124,15 @@ fn stage_openvino_npu_runtime() {
     assert!(status.success(), "failed to compile OpenVINO NPU worker");
 
     let files = [
-        ("libopenvino.so.2026.3.0", "libopenvino.so.2630"),
+        ("libopenvino.so.2026.4.0", "libopenvino.so.2640"),
         (
-            "libopenvino_genai.so.2026.3.0.0",
-            "libopenvino_genai.so.2630",
+            "libopenvino_genai.so.2026.4.0.0",
+            "libopenvino_genai.so.2640",
         ),
         ("libopenvino_tokenizers.so", "libopenvino_tokenizers.so"),
         (
-            "libopenvino_ir_frontend.so.2026.3.0",
-            "libopenvino_ir_frontend.so.2630",
+            "libopenvino_ir_frontend.so.2026.4.0",
+            "libopenvino_ir_frontend.so.2640",
         ),
         (
             "libopenvino_intel_npu_plugin.so",
@@ -176,7 +176,7 @@ fn stage_openvino_npu_runtime() {
     }
 
     println!("cargo:rerun-if-changed={}", source.display());
-    println!("cargo:warning=Staged lean OpenVINO 2026.3 Intel NPU runtime");
+    println!("cargo:warning=Staged lean OpenVINO 2026.4 Intel NPU runtime");
 }
 
 /// Stage the MSVC runtime DLLs into `transcribe-libs/` for app-local deployment.

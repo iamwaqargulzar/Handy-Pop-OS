@@ -379,6 +379,48 @@ pub fn models(multilingual_languages: &[String]) -> Vec<ModelInfo> {
         });
     }
 
+    for (precision, size_mb, accuracy, speed) in
+        [("int8", 1152, 0.94, 0.96), ("int4", 884, 0.90, 0.98)]
+    {
+        models.push(ModelInfo {
+            id: format!("openvino-qwen3-asr-0.6b-{precision}"),
+            name: format!("Qwen3-ASR 0.6B {} (Intel NPU)", precision.to_uppercase()),
+            description: if precision == "int8" {
+                "Compact multilingual Qwen3-ASR using Handy's verified NPU-native pipeline. Recommended 0.6B precision."
+            } else {
+                "Smallest Qwen3-ASR NPU download. Symmetric INT4 compression trades some accuracy for size."
+            }
+            .to_string(),
+            filename: format!("handy-qwen3-asr-0.6b-{precision}-npu"),
+            source: ModelSource::OpenVinoSnapshot {
+                repo_id: format!(
+                    "iamwaqargulzar/handy-qwen3-asr-0.6b-openvino-npu-{precision}"
+                ),
+                revision: if precision == "int8" {
+                    "d31bcf5b1fbfb1d1e236ed3419688b3ac0b117bd"
+                } else {
+                    "745b0ffa451b527f3a60c5e24d04ddd33bbbd47a"
+                }
+                .to_string(),
+            },
+            size_mb,
+            is_downloaded: false,
+            is_downloading: false,
+            partial_size: 0,
+            is_directory: true,
+            engine_type: EngineType::OpenVinoNpu,
+            accuracy_score: accuracy,
+            speed_score: speed,
+            supports_translation: false,
+            is_recommended: false,
+            supported_languages: multilingual_languages.to_vec(),
+            supports_language_selection: true,
+            is_custom: false,
+            supports_streaming: false,
+            supports_language_detection: true,
+        });
+    }
+
     models
 }
 
@@ -389,7 +431,7 @@ mod tests {
     #[test]
     fn official_catalog_is_large_and_unique() {
         let models = models(&["en".into(), "ur".into()]);
-        assert_eq!(models.len(), 42);
+        assert_eq!(models.len(), 44);
         let ids: std::collections::HashSet<_> = models.iter().map(|m| &m.id).collect();
         assert_eq!(ids.len(), models.len());
         assert!(models
