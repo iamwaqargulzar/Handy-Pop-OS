@@ -1,5 +1,46 @@
 # Handy Pop!\_OS Handover
 
+## 2026-09-28 — 0.9.8-popos: NPU pipeline reliability fixes
+
+Symptom: after some transcriptions Whisper and Qwen NPU models stopped
+working, returned empty text, or stuck on "processing"; restarting Handy did
+not reliably help. Root causes found and fixed:
+
+1. **Worker killed after every model load.** The worker used
+   `PR_SET_PDEATHSIG`, which Linux fires when the _thread_ that spawned the
+   child exits, not the Handy process. Models load on short-lived threads, so
+   the kernel sent SIGTERM to the worker as soon as loading finished. The next
+   transcription then silently restarted the worker and reloaded the model
+   (the `OpenVINO worker connection was lost` warning), and a worker restarted
+   from a blocking-pool thread could be killed again mid-transcription. The
+   worker now polls `getppid()` from a watchdog thread instead, which tracks the
+   parent _process_ and still exits within 0.5 s if Handy crashes or is
+   force-killed.
+2. **Whisper Large V3 Turbo returned empty transcripts** when "Translate to
+   English" was on. Turbo was trained without translation data; the NPU
+   catalogue advertised translation for it. Turbo entries now report
+   `supports_translation: false` (matching upstream's GGML Turbo entry), so
+   Handy transcribes with them instead. Use Whisper Large V3 for translation.
+3. **Qwen Auto language leaked `language English<asr_text>`** into the pasted
+   text. The worker now strips Qwen's self-emitted language header. Unmapped
+   language codes fall back to Qwen auto-detection instead of producing a
+   malformed `language xx` prompt; the name table covers Qwen3-ASR's languages.
+4. **Qwen failed on recordings longer than ~76 s** (1024-token NPU prompt),
+   reporting a misleading "30-second" error. Long audio is now split at the
+   quietest 100 ms window between 45 s and 60 s and the segments are joined.
+5. **No timeouts on worker requests.** A hung NPU inference left Handy stuck
+   on "processing" forever. Requests now time out (load 20 min, transcription
+   60 s + audio length); a timed-out worker is killed so the next transcription
+   restarts it cleanly. Inference exceptions are reported as
+   `transcription_failed` instead of `invalid_frame`.
+
+Verification: the patched worker was driven through Handy's protocol from a
+thread that exits after loading (reproducing the original failure: the
+installed worker died and refused every request; the patched worker survived).
+Whisper Large V3 INT8, Whisper Large V3 Turbo INT8, Qwen3-ASR 1.7B INT8 and
+Parakeet TDT V3 each transcribed the user's own recordings correctly, including
+a 90 s clip three times in a row on one worker.
+
 ## 2026-09-24 — upstream 0.9.7 integration
 
 The current release line is `0.9.7-popos.1`. It integrates upstream Handy
@@ -137,9 +178,10 @@ The NPU filter is mutually exclusive with the Streaming and Translation
 filters. Enabling NPU clears those capability filters so the independently
 verified Parakeet entry cannot be hidden by stale filter state.
 
-The native worker installs Linux `PR_SET_PDEATHSIG` supervision before opening
-its socket. If Handy crashes or is force-killed, the kernel terminates the
-multi-gigabyte worker instead of leaving an orphan process and stale NPU state.
+The native worker watches its parent process (a `getppid()` watchdog; it
+originally used `PR_SET_PDEATHSIG`, replaced on 2026-09-28 because that fires on
+spawning-thread exit). If Handy crashes or is force-killed, the worker exits
+instead of leaving an orphan process and stale NPU state.
 Normal shutdown still uses the bounded worker protocol and reaps the child.
 
 ### Parakeet TDT V3 and Qwen3-ASR implementation

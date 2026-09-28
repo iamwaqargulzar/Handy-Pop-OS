@@ -163,10 +163,14 @@ cache hit, while its weightless compiled cache used 2.9 GB of additional disk.
 Qwen uses the same location for separate encoder, embedding, tokenizer, and
 bounded-decoder caches.
 
-The worker sets Linux `PR_SET_PDEATHSIG` and verifies that its parent did not
-change while supervision was installed. This makes cleanup kernel-enforced
-when Handy crashes or is force-killed, while the normal Drop path still asks
-the worker to shut down gracefully and reaps the child.
+The worker runs a watchdog thread that polls `getppid()` every 500 ms and exits
+when Handy (the parent process) is gone, so a crash or force-kill cannot leave
+an orphan. `PR_SET_PDEATHSIG` must not be used: Linux delivers it when the
+spawning _thread_ exits, and Handy loads models on short-lived threads, which
+killed the worker right after every load. The normal Drop path still asks the
+worker to shut down gracefully and reaps the child. Every client request has a
+read timeout; a transcription that exceeds 60 s plus the audio length kills the
+worker so the next request restarts it.
 
 ## Single package
 

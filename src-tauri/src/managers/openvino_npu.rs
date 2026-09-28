@@ -18,6 +18,12 @@ use std::time::{Duration, Instant};
 const PROTOCOL_VERSION: u32 = 1;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const WORKER_START_TIMEOUT: Duration = Duration::from_secs(10);
+/// Short control requests (probe, shutdown).
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
+/// First-time NPU compilation of Whisper Large V3 / Qwen 1.7B takes minutes.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+/// Base allowance per transcription; audio duration is added on top.
+const TRANSCRIBE_BASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct OpenVinoNpuEngine {
     child: Child,
@@ -53,7 +59,7 @@ impl OpenVinoNpuEngine {
         };
         engine.wait_until_ready()?;
 
-        let probe = engine.request(json!({"command": "probe"}), &[])?;
+        let probe = engine.request(json!({"command": "probe"}), &[], CONTROL_TIMEOUT)?;
         if probe
             .pointer("/probe/npu_available")
             .and_then(Value::as_bool)
@@ -68,6 +74,7 @@ impl OpenVinoNpuEngine {
                 "model_path": model_path.to_string_lossy(),
             }),
             &[],
+            LOAD_TIMEOUT,
         )?;
         if loaded
             .pointer("/loaded/actual_device")
@@ -98,8 +105,21 @@ impl OpenVinoNpuEngine {
                 "payload_bytes": payload.len(),
             })
         };
-        let response = match self.request(make_request(), payload) {
+        let timeout =
+            TRANSCRIBE_BASE_TIMEOUT + Duration::from_secs_f64(audio.len() as f64 / 16_000.0);
+        let response = match self.request(make_request(), payload, timeout) {
             Ok(response) => response,
+            Err(error) if is_timeout(&error) => {
+                // A hung NPU inference would otherwise leave Handy "processing"
+                // forever and answer every later request with "busy". Kill it
+                // so the next transcription restarts the worker cleanly.
+                log::error!(
+                    "OpenVINO worker did not answer within {timeout:?}; terminating it: {error}"
+                );
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(anyhow!("OpenVINO NPU worker timed out after {timeout:?}"));
+            }
             Err(first_error) if self.worker_connection_is_broken(&first_error) => {
                 log::warn!(
                     "OpenVINO worker connection was lost; restarting it and reloading {} once: {first_error}",
@@ -109,7 +129,7 @@ impl OpenVinoNpuEngine {
                     format!("failed to recover OpenVINO worker after: {first_error}")
                 })?;
                 *self = replacement;
-                self.request(make_request(), payload)?
+                self.request(make_request(), payload, timeout)?
             }
             Err(error) => return Err(error),
         };
@@ -145,12 +165,14 @@ impl OpenVinoNpuEngine {
         Err(anyhow!("timed out waiting for the OpenVINO worker"))
     }
 
-    fn request(&self, mut request: Value, payload: &[u8]) -> Result<Value> {
+    fn request(&self, mut request: Value, payload: &[u8], timeout: Duration) -> Result<Value> {
         request["protocol_version"] = json!(PROTOCOL_VERSION);
         let body = serde_json::to_vec(&request)?;
         let body_len = u32::try_from(body.len()).context("OpenVINO request is too large")?;
         let mut stream = UnixStream::connect(&self.socket_path)
             .context("failed to connect to the OpenVINO worker")?;
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(CONTROL_TIMEOUT))?;
         stream.write_all(&body_len.to_be_bytes())?;
         stream.write_all(&body)?;
         stream.write_all(payload)?;
@@ -177,6 +199,15 @@ impl OpenVinoNpuEngine {
         }
         Ok(response)
     }
+}
+
+fn is_timeout(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<std::io::Error>().is_some_and(|io| {
+        matches!(
+            io.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        )
+    })
 }
 
 fn openvino_language_token(language: &str) -> String {
@@ -209,7 +240,7 @@ mod tests {
 
 impl Drop for OpenVinoNpuEngine {
     fn drop(&mut self) {
-        let _ = self.request(json!({"command": "shutdown"}), &[]);
+        let _ = self.request(json!({"command": "shutdown"}), &[], Duration::from_secs(2));
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             if matches!(self.child.try_wait(), Ok(Some(_))) {

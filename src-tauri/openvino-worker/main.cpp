@@ -1,7 +1,6 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/socket.h>
-#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <signal.h>
@@ -21,6 +20,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <thread>
 #include <vector>
 
@@ -87,7 +88,45 @@ class Qwen3AsrNpu {
                        {"CACHE_MODE", "OPTIMIZE_SIZE"}}).create_infer_request();
     }
 
+    // The fixed 1024-token NPU prompt holds roughly 76 s of audio, so longer
+    // dictations are split at the quietest 100 ms window between 45 s and 60 s
+    // and the segment transcripts joined.
     std::string transcribe(const std::vector<float>& audio, const std::string& language) {
+        constexpr std::size_t kRate = 16000;
+        constexpr std::size_t kMaxSegment = 60 * kRate;
+        constexpr std::size_t kMinSegment = 45 * kRate;
+        constexpr std::size_t kWindow = kRate / 10;
+        std::string text;
+        std::size_t start = 0;
+        while (start < audio.size()) {
+            std::size_t end = audio.size();
+            if (end - start > kMaxSegment) {
+                end = start + kMaxSegment;
+                double quietest = -1.0;
+                for (std::size_t at = start + kMinSegment; at + kWindow <= start + kMaxSegment;
+                     at += kWindow / 2) {
+                    double energy = 0.0;
+                    for (std::size_t i = at; i < at + kWindow; ++i) energy += audio[i] * audio[i];
+                    if (quietest < 0.0 || energy < quietest) {
+                        quietest = energy;
+                        end = at + kWindow / 2;
+                    }
+                }
+            }
+            const std::vector<float> segment(audio.begin() + start, audio.begin() + end);
+            std::string part = transcribe_segment(segment, language);
+            const auto first = part.find_first_not_of(" \t\n");
+            if (first != std::string::npos) {
+                if (!text.empty()) text += ' ';
+                text += part.substr(first);
+            }
+            start = end;
+        }
+        return text;
+    }
+
+  private:
+    std::string transcribe_segment(const std::vector<float>& audio, const std::string& language) {
         constexpr std::size_t max_new_tokens = 256;
         constexpr int64_t eos_token_id = 151643;
         constexpr int64_t im_end_token_id = 151645;
@@ -105,7 +144,7 @@ class Qwen3AsrNpu {
         const std::size_t audio_tokens =
             (chunk_count - 1) * encoder_tokens_per_chunk_ + final_tokens;
         if (audio_tokens + 32 > max_prompt_tokens_)
-            throw std::runtime_error("Qwen audio is too long for the 30-second NPU prompt window");
+            throw std::runtime_error("Qwen audio segment is too long for the NPU prompt window");
 
         std::cerr << "Qwen NPU: encoding " << features.n_frames << " frames into " << audio_tokens << " tokens\n";
         ov::Tensor hidden(ov::element::f32, {1, audio_tokens, hidden_size_});
@@ -137,7 +176,8 @@ class Qwen3AsrNpu {
                              "<|audio_start|>";
         for (std::size_t i = 0; i < audio_tokens; ++i) prompt += "<|audio_pad|>";
         prompt += "<|audio_end|><|im_end|>\n<|im_start|>assistant\n";
-        if (!language.empty()) prompt += "language " + language_name(language) + "<asr_text>";
+        const std::string forced_language = language.empty() ? "" : language_name(language);
+        if (!forced_language.empty()) prompt += "language " + forced_language + "<asr_text>";
         std::cerr << "Qwen NPU: tokenizing prompt\n";
         auto tokenized = tokenizer_.encode(prompt);
         ov::Tensor input_ids = tokenized.input_ids;
@@ -201,10 +241,15 @@ class Qwen3AsrNpu {
             std::memcpy(current_embeddings.data<float>(), next_embeddings.data<const float>(),
                         current_embeddings.get_byte_size());
         }
-        return tokenizer_.decode(generated);
+        // Without a forced language Qwen emits its own "language X<asr_text>"
+        // header before the transcript; it must never reach the pasted text.
+        std::string text = tokenizer_.decode(generated);
+        constexpr std::string_view marker = "<asr_text>";
+        if (const auto at = text.find(marker); at != std::string::npos)
+            text.erase(0, at + marker.size());
+        return text;
     }
 
-  private:
     static bool is_punctuation(int64_t token) {
         return token == 11 || token == 13 || token == 25 || token == 26;
     }
@@ -213,17 +258,26 @@ class Qwen3AsrNpu {
         std::string code = language;
         if (code.size() > 4 && code.starts_with("<|") && code.ends_with("|>"))
             code = code.substr(2, code.size() - 4);
-        if (code == "en") return "English";
-        if (code == "ur") return "Urdu";
-        if (code == "es") return "Spanish";
-        if (code == "de") return "German";
-        if (code == "fr") return "French";
-        if (code == "it") return "Italian";
-        if (code == "pt") return "Portuguese";
-        if (code == "zh") return "Chinese";
-        if (code == "ja") return "Japanese";
-        if (code == "ko") return "Korean";
-        return code;
+        // Qwen3-ASR's prompt takes English language names. Urdu is kept from the
+        // original mapping even though Qwen does not officially support it.
+        static const std::pair<const char*, const char*> kNames[] = {
+            {"en", "English"},    {"ur", "Urdu"},       {"es", "Spanish"},
+            {"de", "German"},     {"fr", "French"},     {"it", "Italian"},
+            {"pt", "Portuguese"}, {"zh", "Chinese"},    {"zh-Hans", "Chinese"},
+            {"zh-Hant", "Chinese"}, {"yue", "Cantonese"}, {"ja", "Japanese"},
+            {"ko", "Korean"},     {"ar", "Arabic"},     {"id", "Indonesian"},
+            {"ru", "Russian"},    {"th", "Thai"},       {"vi", "Vietnamese"},
+            {"tr", "Turkish"},    {"hi", "Hindi"},      {"ms", "Malay"},
+            {"nl", "Dutch"},      {"sv", "Swedish"},    {"da", "Danish"},
+            {"fi", "Finnish"},    {"pl", "Polish"},     {"cs", "Czech"},
+            {"tl", "Filipino"},   {"fa", "Persian"},    {"el", "Greek"},
+            {"hu", "Hungarian"},  {"mk", "Macedonian"}, {"ro", "Romanian"},
+        };
+        for (const auto& [iso, name] : kNames)
+            if (code == iso) return name;
+        // An unknown raw code ("language xx") is a malformed prompt; let Qwen
+        // detect the language instead.
+        return {};
     }
 
     std::filesystem::path model_dir_;
@@ -428,6 +482,7 @@ json process_request(const json& request, std::vector<unsigned char>& payload,
         const auto started = std::chrono::steady_clock::now();
         std::string text;
         json chunks = json::array();
+        try {
         if (state.parakeet) {
             if (task == "translate")
                 return error_response("unsupported_task", "Parakeet does not translate to English");
@@ -454,6 +509,13 @@ json process_request(const json& request, std::vector<unsigned char>& payload,
                                                    {"end", chunk.end_ts},
                                                    {"text", chunk.text}}));
             }
+        }
+        } catch (const std::exception& error) {
+            // Report inference failures as such instead of letting them surface
+            // as a misleading "invalid_frame" protocol error.
+            state.last_error = error.what();
+            std::cerr << "OpenVINO NPU transcription failed: " << error.what() << "\n";
+            return error_response("transcription_failed", error.what());
         }
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started).count();
@@ -501,14 +563,21 @@ int main(int argc, char** argv) {
     }
     // The worker can hold several gigabytes of compiled model state. Ensure it
     // cannot survive an application crash or forced termination and become a
-    // hidden orphan. Re-check the parent after prctl to close the small race in
-    // which Handy exits between fork/exec and installing the death signal.
+    // hidden orphan.
+    //
+    // PR_SET_PDEATHSIG is deliberately not used: Linux delivers it when the
+    // *thread* that spawned us exits, not the Handy process. Handy loads models
+    // on short-lived threads, so the worker was being SIGTERMed right after
+    // every load and then silently restarted (or killed mid-transcription) by
+    // the next request. getppid() tracks the parent *process*, so poll it.
     const pid_t parent_pid = ::getppid();
-    if (::prctl(PR_SET_PDEATHSIG, SIGTERM) != 0) {
-        std::cerr << "cannot configure parent-death cleanup: " << std::strerror(errno) << "\n";
-        return 1;
-    }
-    if (parent_pid == 1 || ::getppid() != parent_pid) return 1;
+    if (parent_pid == 1) return 1;
+    std::thread([parent_pid] {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (::getppid() != parent_pid) ::_exit(0);
+        }
+    }).detach();
 
     const std::filesystem::path socket_path = argv[1];
     if (socket_path.string().size() >= sizeof(sockaddr_un::sun_path)) {

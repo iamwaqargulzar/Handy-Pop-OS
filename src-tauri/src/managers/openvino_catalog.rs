@@ -294,7 +294,10 @@ pub fn models(multilingual_languages: &[String]) -> Vec<ModelInfo> {
                 } else {
                     0.80
                 },
-                supports_translation: !english_only,
+                // Large V3 Turbo was trained without translation data; asking it
+                // to translate non-English speech yields empty transcripts. Match
+                // upstream's GGML Turbo entry and transcribe instead.
+                supports_translation: !english_only && !turbo,
                 is_recommended: spec.slug == "whisper-large-v3-turbo-int8-ov",
                 supported_languages: if english_only {
                     vec!["en".to_string()]
@@ -437,5 +440,16 @@ mod tests {
         assert!(models
             .iter()
             .all(|m| matches!(m.engine_type, EngineType::OpenVinoNpu)));
+    }
+
+    #[test]
+    fn turbo_models_do_not_offer_translation() {
+        let models = models(&["en".into(), "ur".into()]);
+        let turbo: Vec<_> = models.iter().filter(|m| m.id.contains("turbo")).collect();
+        assert!(!turbo.is_empty());
+        assert!(turbo.iter().all(|m| !m.supports_translation));
+        assert!(models
+            .iter()
+            .any(|m| m.id == "openvino-whisper-large-v3-int8" && m.supports_translation));
     }
 }
