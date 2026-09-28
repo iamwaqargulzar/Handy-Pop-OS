@@ -1,7 +1,8 @@
 {
   "name": "handy-app",
   "private": true,
-  "version": "0.9.8-popos",
+  "version": "0.9.7",
+  "releaseVersion": "0.9.7.1",
   "type": "module",
   "scripts": {
     "dev": "vite",

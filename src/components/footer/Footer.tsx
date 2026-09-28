@@ -1,25 +1,10 @@
-import React, { useState, useEffect } from "react";
-import { getVersion } from "@tauri-apps/api/app";
+import React from "react";
 
 import ModelSelector from "../model-selector";
 import UpdateChecker from "../update-checker";
 
 const Footer: React.FC = () => {
-  const [version, setVersion] = useState("");
-
-  useEffect(() => {
-    const fetchVersion = async () => {
-      try {
-        const appVersion = await getVersion();
-        setVersion(appVersion);
-      } catch (error) {
-        console.error("Failed to get app version:", error);
-        setVersion("0.1.2");
-      }
-    };
-
-    fetchVersion();
-  }, []);
+  const version = __HANDY_RELEASE_VERSION__;
 
   return (
     <div className="w-full border-t border-mid-gray/20 pt-3">

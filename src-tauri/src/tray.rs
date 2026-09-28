@@ -204,9 +204,9 @@ pub fn tray_tooltip() -> String {
 
 fn version_label() -> String {
     if cfg!(debug_assertions) {
-        format!("Handy v{} (Dev)", env!("CARGO_PKG_VERSION"))
+        format!("Handy v{} (Dev)", env!("HANDY_RELEASE_VERSION"))
     } else {
-        format!("Handy v{}", env!("CARGO_PKG_VERSION"))
+        format!("Handy v{}", env!("HANDY_RELEASE_VERSION"))
     }
 }
 

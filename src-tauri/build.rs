@@ -1,4 +1,6 @@
 fn main() {
+    export_release_version();
+
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
 
@@ -82,7 +84,7 @@ fn stage_openvino_npu_runtime() {
             .expect("HANDY_OPENVINO_GENAI_SOURCE is required with HANDY_OPENVINO_GENAI_ROOT"),
     );
 
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let source = manifest.join("openvino-worker/main.cpp");
     let eddy = manifest.join("openvino-worker/third_party/eddy");
     let runtime_lib = root.join("runtime/lib/intel64");
@@ -739,4 +741,20 @@ fn is_command_line_tools_only() -> bool {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|path| path.trim().ends_with("CommandLineTools"))
         .unwrap_or(false)
+}
+
+/// Expose `releaseVersion` from package.json (e.g. `0.9.7.1`) as
+/// `HANDY_RELEASE_VERSION`. Cargo requires three-part semver in Cargo.toml, so
+/// the fork's four-part release number lives in package.json.
+fn export_release_version() {
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let package_json = manifest.join("../package.json");
+    println!("cargo:rerun-if-changed={}", package_json.display());
+    let contents = std::fs::read_to_string(&package_json).expect("read package.json");
+    let package: serde_json::Value = serde_json::from_str(&contents).expect("parse package.json");
+    let version = package["releaseVersion"]
+        .as_str()
+        .or_else(|| package["version"].as_str())
+        .expect("package.json has no version");
+    println!("cargo:rustc-env=HANDY_RELEASE_VERSION={version}");
 }

@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
-import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -13,21 +12,7 @@ import { LogDirectory } from "../debug";
 
 export const AboutSettings: React.FC = () => {
   const { t } = useTranslation();
-  const [version, setVersion] = useState("");
-
-  useEffect(() => {
-    const fetchVersion = async () => {
-      try {
-        const appVersion = await getVersion();
-        setVersion(appVersion);
-      } catch (error) {
-        console.error("Failed to get app version:", error);
-        setVersion("0.1.2");
-      }
-    };
-
-    fetchVersion();
-  }, []);
+  const version = __HANDY_RELEASE_VERSION__;
 
   const handleDonateClick = async () => {
     try {

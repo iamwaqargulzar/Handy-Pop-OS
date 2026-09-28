@@ -1,6 +1,6 @@
 # Handy Pop!\_OS Handover
 
-## 2026-09-28 — 0.9.8-popos: NPU pipeline reliability fixes
+## 2026-09-28 — 0.9.7.1: NPU pipeline reliability fixes
 
 Symptom: after some transcriptions Whisper and Qwen NPU models stopped
 working, returned empty text, or stuck on "processing"; restarting Handy did

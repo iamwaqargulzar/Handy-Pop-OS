@@ -2,12 +2,19 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
+import packageJson from "./package.json";
 
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
+
+  // Fork release number (e.g. 0.9.7.1). Cargo/Tauri versions must be three-part
+  // semver, so the displayed release version is kept separately.
+  define: {
+    __HANDY_RELEASE_VERSION__: JSON.stringify(packageJson.releaseVersion),
+  },
 
   // Path aliases
   resolve: {
